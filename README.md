@@ -1,29 +1,81 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Jemacash Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+NestJS + PostgreSQL + TypeORM backend for the Jemacash loan platform.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Requirements
 
-## Description
+- Node.js 20+
+- PostgreSQL 14+
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Setup
+
+```bash
+# 1. Copy and edit env
+cp .env.example .env
+
+# 2. Create the database
+createdb jemacash
+
+# 3. Start in dev mode (TypeORM synchronize=true creates tables automatically)
+npm run start:dev
+```
+
+Server starts on `http://localhost:3000`.
+
+## API Reference
+
+### Auth (no token required)
+| Method | Path | Body |
+|--------|------|------|
+| POST | /auth/register | `{ full_name, email, password, phone? }` |
+| POST | /auth/login | `{ identifier, password }` |
+| POST | /auth/refresh | `{ refresh_token }` |
+| POST | /auth/logout | `{ refresh_token }` |
+| GET  | /auth/me | — (Bearer token required) |
+
+All protected endpoints require `Authorization: Bearer <access_token>`.
+
+### Applications
+| Method | Path | Notes |
+|--------|------|-------|
+| GET  | /applications | List user's applications |
+| POST | /applications | Create draft: `{ amount, term_months, guarantee_id? }` |
+| GET  | /applications/:id | Get single application |
+| POST | /applications/:id/submit | Submit draft → triggers evaluation |
+
+### Evaluation
+| Method | Path | Notes |
+|--------|------|-------|
+| GET   | /applications/:id/evaluation | Get evaluation |
+| PATCH | /applications/:id/evaluation | `{ status: "approved"\|"rejected", approved_amount?, risk_score?, notes? }` |
+
+### Signature
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | /applications/:id/signature | `{ signature_base64, document_urls? }` |
+| GET  | /applications/:id/signature | Get signature |
+
+### Guarantees
+| Method | Path | Notes |
+|--------|------|-------|
+| GET  | /guarantees | List user's guarantees |
+| POST | /guarantees | `{ type, name, description?, estimated_value }` |
+
+## Business Flow
+
+```
+POST /auth/register
+  → POST /applications                       (status: draft)
+  → POST /applications/:id/submit            (status: submitted, evaluation created)
+  → PATCH /applications/:id/evaluation       (status: approved → application = approved)
+  → POST /applications/:id/signature         (status: signed)
+```
+
+## Token Lifecycle
+
+- **Access token**: 15 min, HS256 (`JWT_SECRET`)
+- **Refresh token**: 30 days, HS256 (`JWT_REFRESH_SECRET`), session stored in DB
+- Refresh rotates: each `/auth/refresh` issues new pair + invalidates old session
 
 ## Project setup
 
