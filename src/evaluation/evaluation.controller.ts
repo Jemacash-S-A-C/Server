@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Inject, Param, Patch, UseGuards, forwardRef } from '@nestjs/common';
 import { EvaluationService } from './evaluation.service';
-import { UpdateEvaluationDto } from './dto/update-evaluation.dto';
+import { UpdateEvaluationDto } from './entities/update-evaluation.dto';
 import { ApplicationsService } from '../applications/applications.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 

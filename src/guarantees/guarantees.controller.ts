@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { GuaranteesService } from './guarantees.service';
 import { CreateGuaranteeDto } from './dto/create-guarantee.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -13,6 +13,11 @@ export class GuaranteesController {
   @Get()
   findAll(@CurrentUser() user: User) {
     return this.guaranteesService.findAll(user.id);
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.guaranteesService.findOne(id, user.id);
   }
 
   @Post()

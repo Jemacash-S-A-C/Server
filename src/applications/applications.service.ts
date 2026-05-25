@@ -26,6 +26,7 @@ export class ApplicationsService {
   findAll(userId: string): Promise<LoanApplication[]> {
     return this.repo.find({
       where: { user_id: userId },
+      relations: { guarantee: true },
       order: { created_at: 'DESC' },
     });
   }

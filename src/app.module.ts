@@ -7,12 +7,14 @@ import { ApplicationsModule } from './applications/applications.module';
 import { GuaranteesModule } from './guarantees/guarantees.module';
 import { EvaluationModule } from './evaluation/evaluation.module';
 import { SignatureModule } from './signature/signature.module';
+import { PaymentsModule } from './payments/payments.module';
 import { User } from './users/entities/user.entity';
 import { Session } from './users/entities/session.entity';
 import { Guarantee } from './guarantees/entities/guarantee.entity';
 import { LoanApplication } from './applications/entities/loan-application.entity';
 import { Evaluation } from './evaluation/entities/evaluation.entity';
 import { Signature } from './signature/entities/signature.entity';
+import { Payment } from './payments/entities/payment.entity';
 
 @Module({
   imports: [
@@ -24,7 +26,7 @@ import { Signature } from './signature/entities/signature.entity';
       username: process.env.DB_USER ?? 'postgres',
       password: process.env.DB_PASSWORD ?? 'postgres',
       database: process.env.DB_NAME ?? 'jemacash',
-      entities: [User, Session, Guarantee, LoanApplication, Evaluation, Signature],
+      entities: [User, Session, Guarantee, LoanApplication, Evaluation, Signature, Payment],
       synchronize: process.env.NODE_ENV !== 'production',
       logging: process.env.NODE_ENV === 'development',
     }),
@@ -34,6 +36,7 @@ import { Signature } from './signature/entities/signature.entity';
     GuaranteesModule,
     EvaluationModule,
     SignatureModule,
+    PaymentsModule,
   ],
 })
 export class AppModule {}

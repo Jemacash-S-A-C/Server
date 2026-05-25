@@ -6,7 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Evaluation, EvaluationStatus } from './entities/evaluation.entity';
-import { UpdateEvaluationDto } from './dto/update-evaluation.dto';
+import { UpdateEvaluationDto } from './entities/update-evaluation.dto';
 import { ApplicationStatus } from '../applications/entities/loan-application.entity';
 
 @Injectable()
