@@ -8,6 +8,8 @@ import { GuaranteesModule } from './guarantees/guarantees.module';
 import { EvaluationModule } from './evaluation/evaluation.module';
 import { SignatureModule } from './signature/signature.module';
 import { PaymentsModule } from './payments/payments.module';
+import { DocumentsModule } from './documents/documents.module';
+import { Document } from './documents/entities/document.entity';
 import { User } from './users/entities/user.entity';
 import { Session } from './users/entities/session.entity';
 import { Guarantee } from './guarantees/entities/guarantee.entity';
@@ -26,7 +28,7 @@ import { Payment } from './payments/entities/payment.entity';
       username: process.env.DB_USER ?? 'postgres',
       password: process.env.DB_PASSWORD ?? 'postgres',
       database: process.env.DB_NAME ?? 'jemacash',
-      entities: [User, Session, Guarantee, LoanApplication, Evaluation, Signature, Payment],
+      entities: [User, Session, Guarantee, LoanApplication, Evaluation, Signature, Payment, Document],
       synchronize: process.env.NODE_ENV !== 'production',
       logging: process.env.NODE_ENV === 'development',
     }),
@@ -37,6 +39,7 @@ import { Payment } from './payments/entities/payment.entity';
     EvaluationModule,
     SignatureModule,
     PaymentsModule,
+    DocumentsModule,
   ],
 })
 export class AppModule {}
