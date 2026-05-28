@@ -2,7 +2,7 @@ import { IsNumber, IsInt, IsOptional, IsUUID, Min, Max } from 'class-validator';
 
 export class CreateApplicationDto {
   @IsNumber()
-  @Min(1000)
+  @Min(100)
   @Max(50000)
   amount: number;
 

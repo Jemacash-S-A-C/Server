@@ -5,7 +5,6 @@ import { ApplicationsService } from './applications.service';
 import { LoanApplication } from './entities/loan-application.entity';
 import { EvaluationModule } from '../evaluation/evaluation.module';
 import { SignatureModule } from '../signature/signature.module';
-
 @Module({
   imports: [
     TypeOrmModule.forFeature([LoanApplication]),

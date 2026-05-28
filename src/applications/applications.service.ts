@@ -13,7 +13,6 @@ import {
 } from './entities/loan-application.entity';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { EvaluationService } from '../evaluation/evaluation.service';
-
 @Injectable()
 export class ApplicationsService {
   constructor(
