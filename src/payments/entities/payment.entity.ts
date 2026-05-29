@@ -15,11 +15,12 @@ export enum PaymentStatus {
 }
 
 export enum PaymentMethod {
-  BCP      = 'bcp',
-  BBVA     = 'bbva',
-  YAPE     = 'yape',
-  PLIN     = 'plin',
-  EFECTIVO = 'efectivo',
+  BCP          = 'bcp',
+  BBVA         = 'bbva',
+  YAPE         = 'yape',
+  PLIN         = 'plin',
+  EFECTIVO     = 'efectivo',
+  MERCADOPAGO  = 'mercadopago',
 }
 
 @Entity('payments')
@@ -55,6 +56,9 @@ export class Payment {
 
   @Column({ type: 'varchar', length: 32, unique: true })
   reference_number: string;
+
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  mp_payment_id: string | null;
 
   @CreateDateColumn()
   created_at: Date;

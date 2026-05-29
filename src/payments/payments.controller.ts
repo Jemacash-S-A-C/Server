@@ -9,12 +9,18 @@ import {
 } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
+import { MpChargeDto } from './dto/mp-charge.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @UseGuards(JwtAuthGuard)
 @Controller('payments')
 export class PaymentsController {
   constructor(private readonly service: PaymentsService) {}
+
+  @Post('mp-charge')
+  mpCharge(@Request() req, @Body() dto: MpChargeDto) {
+    return this.service.mpCharge(req.user.id, dto);
+  }
 
   @Post()
   create(@Request() req, @Body() dto: CreatePaymentDto) {
