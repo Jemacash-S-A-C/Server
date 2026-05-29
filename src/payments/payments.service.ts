@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Payment, PaymentStatus } from './entities/payment.entity';
@@ -18,6 +18,13 @@ export class PaymentsService {
   ) {}
 
   async create(userId: string, dto: CreatePaymentDto): Promise<Payment> {
+    const existing = await this.repo.findOne({
+      where: { application_id: dto.application_id, cuota_number: dto.cuota_number },
+    });
+    if (existing) {
+      throw new ConflictException(`La cuota ${dto.cuota_number} ya fue pagada.`);
+    }
+
     const payment = this.repo.create({
       ...dto,
       user_id: userId,

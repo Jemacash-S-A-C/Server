@@ -17,6 +17,7 @@ import { LoanApplication } from './applications/entities/loan-application.entity
 import { Evaluation } from './evaluation/entities/evaluation.entity';
 import { Signature } from './signature/entities/signature.entity';
 import { Payment } from './payments/entities/payment.entity';
+import { PasswordResetToken } from './auth/entities/password-reset-token.entity';
 
 @Module({
   imports: [
@@ -28,7 +29,7 @@ import { Payment } from './payments/entities/payment.entity';
       username: process.env.DB_USER ?? 'postgres',
       password: process.env.DB_PASSWORD ?? 'postgres',
       database: process.env.DB_NAME ?? 'jemacash',
-      entities: [User, Session, Guarantee, LoanApplication, Evaluation, Signature, Payment, Document],
+      entities: [User, Session, Guarantee, LoanApplication, Evaluation, Signature, Payment, Document, PasswordResetToken],
       synchronize: process.env.NODE_ENV !== 'production',
       logging: process.env.NODE_ENV === 'development',
     }),

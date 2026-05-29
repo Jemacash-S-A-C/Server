@@ -4,6 +4,7 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { UsersService } from '../users/users.service';
@@ -41,6 +42,7 @@ export class AuthService {
     const user = await this.usersService.findByEmail(identifier);
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
+    if (!user.password_hash) throw new UnauthorizedException('Esta cuenta usa Google para iniciar sesión');
     const valid = await bcrypt.compare(dto.password, user.password_hash);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
@@ -67,6 +69,35 @@ export class AuthService {
 
     await this.usersService.deleteSession(session.id);
     return this.issueTokens(user);
+  }
+
+  async loginWithGoogle(user: User) {
+    return this.issueTokens(user);
+  }
+
+  async forgotPassword(email: string): Promise<void> {
+    const user = await this.usersService.findByEmail(email.toLowerCase());
+    // Silencioso: no revelar si el email existe o no
+    if (!user || !user.password_hash) return;
+
+    const token = randomUUID();
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
+    await this.usersService.createPasswordResetToken(user.id, token, expiresAt);
+
+    const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
+    const resetUrl = `${frontendUrl}/?reset_token=${token}`;
+    // En desarrollo, el link aparece en consola. En producción, configurar SMTP aquí.
+    console.log(`[AUTH] Password reset link for ${email}: ${resetUrl}`);
+  }
+
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    const resetToken = await this.usersService.findPasswordResetToken(token);
+    if (!resetToken || resetToken.used || resetToken.expires_at < new Date()) {
+      throw new BadRequestException('El enlace es inválido o ya expiró.');
+    }
+    const hash = await bcrypt.hash(newPassword, 12);
+    await this.usersService.setPasswordHash(resetToken.user_id, hash);
+    await this.usersService.markPasswordResetTokenUsed(resetToken.id);
   }
 
   async logout(refreshToken: string) {

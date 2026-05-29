@@ -5,12 +5,14 @@ import * as bcrypt from 'bcrypt';
 import { User } from './entities/user.entity';
 import { Session } from './entities/session.entity';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { PasswordResetToken } from '../auth/entities/password-reset-token.entity';
 
 @Injectable()
 export class UsersService {
   constructor(
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     @InjectRepository(Session) private readonly sessionRepo: Repository<Session>,
+    @InjectRepository(PasswordResetToken) private readonly resetTokenRepo: Repository<PasswordResetToken>,
   ) {}
 
   async findById(id: string): Promise<User | null> {
@@ -19,6 +21,15 @@ export class UsersService {
 
   async findByEmail(email: string): Promise<User | null> {
     return this.userRepo.findOne({ where: { email } });
+  }
+
+  async findByGoogleId(googleId: string): Promise<User | null> {
+    return this.userRepo.findOne({ where: { google_id: googleId } });
+  }
+
+  async linkGoogleId(userId: string, googleId: string): Promise<User> {
+    await this.userRepo.update(userId, { google_id: googleId });
+    return this.userRepo.findOneOrFail({ where: { id: userId } });
   }
 
   async create(data: Partial<User>): Promise<User> {
@@ -60,5 +71,22 @@ export class UsersService {
 
   async deleteUserSessions(userId: string): Promise<void> {
     await this.sessionRepo.delete({ user_id: userId });
+  }
+
+  async setPasswordHash(userId: string, hash: string): Promise<void> {
+    await this.userRepo.update(userId, { password_hash: hash });
+  }
+
+  async createPasswordResetToken(userId: string, token: string, expiresAt: Date): Promise<PasswordResetToken> {
+    const prt = this.resetTokenRepo.create({ user_id: userId, token, expires_at: expiresAt });
+    return this.resetTokenRepo.save(prt);
+  }
+
+  async findPasswordResetToken(token: string): Promise<PasswordResetToken | null> {
+    return this.resetTokenRepo.findOne({ where: { token } });
+  }
+
+  async markPasswordResetTokenUsed(id: string): Promise<void> {
+    await this.resetTokenRepo.update(id, { used: true });
   }
 }

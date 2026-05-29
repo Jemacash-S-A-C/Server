@@ -18,11 +18,14 @@ export class User {
   @Column({ unique: true, length: 254 })
   email: string;
 
-  @Column()
+  @Column({ nullable: true })
   password_hash: string;
 
   @Column({ length: 20, nullable: true })
   phone: string;
+
+  @Column({ length: 100, nullable: true, unique: true })
+  google_id: string;
 
   @CreateDateColumn()
   created_at: Date;
