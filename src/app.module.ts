@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
+import { MailModule } from './mail/mail.module';
 import { AuthModule } from './auth/auth.module';
+import { TwoFactorModule } from './auth/two-factor/two-factor.module';
 import { UsersModule } from './users/users.module';
 import { ApplicationsModule } from './applications/applications.module';
 import { GuaranteesModule } from './guarantees/guarantees.module';
@@ -33,7 +35,9 @@ import { PasswordResetToken } from './auth/entities/password-reset-token.entity'
       synchronize: process.env.NODE_ENV !== 'production',
       logging: process.env.NODE_ENV === 'development',
     }),
+    MailModule,
     AuthModule,
+    TwoFactorModule,
     UsersModule,
     ApplicationsModule,
     GuaranteesModule,

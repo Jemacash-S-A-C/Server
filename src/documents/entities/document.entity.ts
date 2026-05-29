@@ -48,7 +48,7 @@ export class Document {
   @Column({ type: 'text' })
   content_base64: string;
 
-  @Column({ type: 'enum', enum: DocumentStatus, default: DocumentStatus.PENDING })
+  @Column({ type: 'enum', enum: DocumentStatus, default: DocumentStatus.VERIFIED })
   status: DocumentStatus;
 
   @Column({ type: 'text', nullable: true })

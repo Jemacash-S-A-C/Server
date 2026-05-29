@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Delete, Body, Param, UseGuards,
+  Controller, Get, Post, Delete, Body, Param, UseGuards, HttpCode, HttpStatus,
 } from '@nestjs/common';
 import { DocumentsService } from './documents.service';
 import { CreateDocumentDto } from './dto/create-document.dto';
@@ -36,6 +36,7 @@ export class DocumentsController {
   }
 
   @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
   remove(@CurrentUser() user: User, @Param('id') id: string) {
     return this.service.remove(user.id, id);
   }

@@ -5,7 +5,9 @@ import * as bcrypt from 'bcrypt';
 import { User } from './entities/user.entity';
 import { Session } from './entities/session.entity';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { UpdatePreferencesDto } from './dto/update-preferences.dto';
 import { PasswordResetToken } from '../auth/entities/password-reset-token.entity';
+import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class UsersService {
@@ -13,6 +15,7 @@ export class UsersService {
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     @InjectRepository(Session) private readonly sessionRepo: Repository<Session>,
     @InjectRepository(PasswordResetToken) private readonly resetTokenRepo: Repository<PasswordResetToken>,
+    private readonly mail: MailService,
   ) {}
 
   async findById(id: string): Promise<User | null> {
@@ -44,6 +47,12 @@ export class UsersService {
     return this.userRepo.findOneOrFail({ where: { id: userId } });
   }
 
+  async updatePreferences(userId: string, dto: UpdatePreferencesDto): Promise<void> {
+    if (Object.keys(dto).length > 0) {
+      await this.userRepo.update(userId, dto);
+    }
+  }
+
   async changePassword(
     userId: string,
     currentPassword: string,
@@ -54,6 +63,9 @@ export class UsersService {
     if (!valid) throw new UnauthorizedException('Contraseña actual incorrecta.');
     const hash = await bcrypt.hash(newPassword, 12);
     await this.userRepo.update(userId, { password_hash: hash });
+
+    // Alerta de seguridad (no bloquea si falla)
+    this.mail.sendPasswordChanged(user.email, user.full_name, user.notification_email).catch(() => {});
   }
 
   async createSession(userId: string, expiresAt: Date): Promise<Session> {

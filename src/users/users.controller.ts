@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Patch, Post, UseGuards } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { UpdatePreferencesDto } from './dto/update-preferences.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -25,6 +26,15 @@ export class UsersController {
     return this.toProfile(updated);
   }
 
+  @Patch('me/preferences')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async updatePreferences(
+    @CurrentUser() user: User,
+    @Body() dto: UpdatePreferencesDto,
+  ) {
+    await this.service.updatePreferences(user.id, dto);
+  }
+
   @Post('change-password')
   async changePassword(
     @CurrentUser() user: User,
@@ -36,17 +46,22 @@ export class UsersController {
 
   private toProfile(user: User) {
     return {
-      id: user.id,
-      full_name: user.full_name,
-      email: user.email,
-      phone: user.phone ?? null,
-      initials: user.full_name
+      id:                 user.id,
+      full_name:          user.full_name,
+      email:              user.email,
+      phone:              user.phone ?? null,
+      has_google:         !!user.google_id,
+      initials:           user.full_name
         .trim()
         .split(/\s+/)
         .slice(0, 2)
         .map((p) => p[0]?.toUpperCase() ?? '')
         .join(''),
-      created_at: user.created_at,
+      created_at:         user.created_at,
+      notification_email: user.notification_email,
+      pref_currency:      user.pref_currency,
+      pref_language:      user.pref_language,
+      pref_timezone:      user.pref_timezone,
     };
   }
 }
