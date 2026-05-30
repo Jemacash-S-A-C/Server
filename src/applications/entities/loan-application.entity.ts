@@ -12,11 +12,12 @@ import { User } from '../../users/entities/user.entity';
 import { Guarantee } from '../../guarantees/entities/guarantee.entity';
 
 export enum ApplicationStatus {
-  DRAFT = 'draft',
-  SUBMITTED = 'submitted',
-  APPROVED = 'approved',
-  REJECTED = 'rejected',
-  SIGNED = 'signed',
+  DRAFT      = 'draft',
+  SUBMITTED  = 'submitted',
+  SIGNED     = 'signed',
+  APPROVED   = 'approved',
+  DISBURSED  = 'disbursed',
+  REJECTED   = 'rejected',
 }
 
 @Entity('loan_applications')

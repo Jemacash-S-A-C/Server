@@ -2,7 +2,6 @@ import { Body, Controller, Get, Inject, Param, Post, UseGuards, forwardRef } fro
 import { SignatureService } from './signature.service';
 import { CreateSignatureDto } from './dto/create-signature.dto';
 import { ApplicationsService } from '../applications/applications.service';
-import { ApplicationStatus } from '../applications/entities/loan-application.entity';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
@@ -22,16 +21,15 @@ export class SignatureController {
     @CurrentUser() user: User,
     @Body() dto: CreateSignatureDto,
   ) {
+    // Verify ownership before proceeding
     await this.applicationsService.findOne(applicationId, user.id);
-    const sig = await this.signatureService.create(applicationId, dto);
-    await this.applicationsService.updateStatus(applicationId, ApplicationStatus.SIGNED);
-    return sig;
+    // Service handles both signature creation and status transition (signed or auto-approved)
+    return this.signatureService.create(applicationId, user.id, dto);
   }
 
   @Get()
   findOne(
     @Param('applicationId') applicationId: string,
-    @CurrentUser() user: User,
   ) {
     return this.signatureService.findByApplication(applicationId);
   }

@@ -80,4 +80,17 @@ export class ApplicationsService {
     await this.findOne(id, userId);
     return this.updateStatus(id, ApplicationStatus.APPROVED);
   }
+
+  /**
+   * Triggered by the field agent after physical device collection and verification.
+   * Transitions approved → disbursed and releases the guarantee from pledged status.
+   * Provisional: will be restricted to agent/admin role once that flow is built.
+   */
+  async disburse(id: string, userId: string): Promise<LoanApplication> {
+    const app = await this.findOne(id, userId);
+    if (app.status !== ApplicationStatus.APPROVED) {
+      throw new BadRequestException('Only approved applications can be disbursed');
+    }
+    return this.updateStatus(id, ApplicationStatus.DISBURSED);
+  }
 }

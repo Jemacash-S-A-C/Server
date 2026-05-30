@@ -35,4 +35,13 @@ export class ApplicationsController {
   approveBypass(@Param('id') id: string, @CurrentUser() user: User) {
     return this.applicationsService.approveBypass(id, user.id);
   }
+
+  /**
+   * Triggered after physical device pickup and on-site verification.
+   * Provisional: will be restricted to agent/admin role.
+   */
+  @Patch(':id/disburse')
+  disburse(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.applicationsService.disburse(id, user.id);
+  }
 }
