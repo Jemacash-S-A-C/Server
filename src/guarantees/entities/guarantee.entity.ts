@@ -72,6 +72,32 @@ export class Guarantee {
   @Column({ type: 'jsonb', nullable: true })
   photo_urls: string[] | null;
 
+  // ── AI Valuation fields (populated after Gemini analysis) ─────────────────
+
+  @Column({ type: 'numeric', precision: 12, scale: 2, nullable: true })
+  ai_market_value: number | null;
+
+  @Column({ type: 'numeric', precision: 12, scale: 2, nullable: true })
+  ai_resale_value: number | null;
+
+  @Column({ type: 'numeric', precision: 12, scale: 2, nullable: true })
+  ai_max_loan: number | null;
+
+  @Column({ type: 'numeric', precision: 4, scale: 2, nullable: true })
+  ai_condition_score: number | null;
+
+  @Column({ type: 'jsonb', nullable: true })
+  ai_depreciation_factors: string[] | null;
+
+  @Column({ type: 'numeric', precision: 3, scale: 2, nullable: true })
+  ai_confidence: number | null;
+
+  @Column({ type: 'text', nullable: true })
+  ai_reasoning: string | null;
+
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  ai_visual_condition: string | null;
+
   @CreateDateColumn()
   created_at: Date;
 }

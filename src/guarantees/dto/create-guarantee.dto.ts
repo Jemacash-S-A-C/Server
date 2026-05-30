@@ -18,7 +18,8 @@ export class CreateGuaranteeDto {
 
   @IsNumber()
   @Min(0)
-  estimated_value: number;
+  @IsOptional()
+  estimated_value?: number;
 
   // ── Technology-specific (all optional) ───────────────────────────────────
 
@@ -60,4 +61,45 @@ export class CreateGuaranteeDto {
   @IsString({ each: true })
   @IsOptional()
   photo_urls?: string[];
+
+  // ── AI Valuation (optional, sent after Gemini analysis) ──────────────────
+
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  ai_market_value?: number;
+
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  ai_resale_value?: number;
+
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  ai_max_loan?: number;
+
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  ai_condition_score?: number;
+
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  ai_depreciation_factors?: string[];
+
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  ai_confidence?: number;
+
+  @IsString()
+  @IsOptional()
+  ai_reasoning?: string;
+
+  @IsString()
+  @MaxLength(20)
+  @IsOptional()
+  ai_visual_condition?: string;
 }

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Guarantee } from './entities/guarantee.entity';
 import { CreateGuaranteeDto } from './dto/create-guarantee.dto';
+import { UpdateGuaranteeAiDto } from './dto/update-guarantee-ai.dto';
 
 @Injectable()
 export class GuaranteesService {
@@ -15,7 +16,7 @@ export class GuaranteesService {
   }
 
   async create(userId: string, dto: CreateGuaranteeDto): Promise<Guarantee> {
-    const guarantee = this.repo.create({ ...dto, user_id: userId });
+    const guarantee = this.repo.create({ ...dto, estimated_value: dto.estimated_value ?? 0, user_id: userId });
     return this.repo.save(guarantee);
   }
 
@@ -23,5 +24,11 @@ export class GuaranteesService {
     const g = await this.repo.findOne({ where: { id, user_id: userId } });
     if (!g) throw new NotFoundException('Guarantee not found');
     return g;
+  }
+
+  async updateAiFields(id: string, userId: string, dto: UpdateGuaranteeAiDto): Promise<Guarantee> {
+    const g = await this.findOne(id, userId);
+    Object.assign(g, dto);
+    return this.repo.save(g);
   }
 }

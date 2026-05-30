@@ -11,6 +11,7 @@ import { EvaluationModule } from './evaluation/evaluation.module';
 import { SignatureModule } from './signature/signature.module';
 import { PaymentsModule } from './payments/payments.module';
 import { DocumentsModule } from './documents/documents.module';
+import { AiEvaluationModule } from './ai-evaluation/ai-evaluation.module';
 import { Document } from './documents/entities/document.entity';
 import { User } from './users/entities/user.entity';
 import { Session } from './users/entities/session.entity';
@@ -45,6 +46,7 @@ import { PasswordResetToken } from './auth/entities/password-reset-token.entity'
     SignatureModule,
     PaymentsModule,
     DocumentsModule,
+    AiEvaluationModule,
   ],
 })
 export class AppModule {}

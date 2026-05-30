@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { GuaranteesService } from './guarantees.service';
 import { CreateGuaranteeDto } from './dto/create-guarantee.dto';
+import { UpdateGuaranteeAiDto } from './dto/update-guarantee-ai.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
@@ -23,5 +24,10 @@ export class GuaranteesController {
   @Post()
   create(@CurrentUser() user: User, @Body() dto: CreateGuaranteeDto) {
     return this.guaranteesService.create(user.id, dto);
+  }
+
+  @Patch(':id/ai')
+  updateAi(@Param('id') id: string, @CurrentUser() user: User, @Body() dto: UpdateGuaranteeAiDto) {
+    return this.guaranteesService.updateAiFields(id, user.id, dto);
   }
 }
