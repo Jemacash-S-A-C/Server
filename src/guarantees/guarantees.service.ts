@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Guarantee } from './entities/guarantee.entity';
+import { Guarantee, GuaranteeStatus } from './entities/guarantee.entity';
 import { CreateGuaranteeDto } from './dto/create-guarantee.dto';
 import { UpdateGuaranteeAiDto } from './dto/update-guarantee-ai.dto';
 
@@ -32,6 +32,10 @@ export class GuaranteesService {
     // Keep estimated_value in sync so every component that reads it shows a real number
     if (dto.ai_resale_value !== undefined && dto.ai_resale_value > 0) {
       g.estimated_value = dto.ai_resale_value;
+    }
+    // Once the AI valuation completes, promote from pending_evaluation → active (available)
+    if (g.status === GuaranteeStatus.PENDING_EVALUATION) {
+      g.status = GuaranteeStatus.ACTIVE;
     }
     return this.repo.save(g);
   }

@@ -9,6 +9,7 @@ import {
 import { User } from '../../users/entities/user.entity';
 
 export enum GuaranteeStatus {
+  PENDING_EVALUATION = 'pending_evaluation',
   ACTIVE = 'active',
   PLEDGED = 'pledged',
   RELEASED = 'released',
@@ -38,7 +39,7 @@ export class Guarantee {
   @Column({ type: 'numeric', precision: 12, scale: 2 })
   estimated_value: number;
 
-  @Column({ type: 'enum', enum: GuaranteeStatus, default: GuaranteeStatus.ACTIVE })
+  @Column({ type: 'enum', enum: GuaranteeStatus, default: GuaranteeStatus.PENDING_EVALUATION })
   status: GuaranteeStatus;
 
   // ── Technology-specific fields (nullable → backward-compatible) ───────────
