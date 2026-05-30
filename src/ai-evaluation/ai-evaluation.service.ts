@@ -29,13 +29,13 @@ export class AiEvaluationService {
   async valuateDevice(dto: ValuateDeviceDto): Promise<AiValuationResult> {
     if (this.isMock) return this.mockValuation(dto);
 
-    const mlPrices = await this.fetchMercadoLibrePrices(dto);
+    const webPrices = await this.fetchPricesViaWebSearch(dto);
     const photoKBs = dto.photos.map((p) => Math.round(p.length / 1024));
-    this.logger.log(`AI valuate — ${dto.photos.length} fotos [${photoKBs.join(', ')} KB], modelo: llama-4-scout (vision) / llama-3.3-70b (texto)`);
+    this.logger.log(`AI valuate — ${dto.photos.length} fotos [${photoKBs.join(', ')} KB], web price ref: S/${Math.round(webPrices.min)}–${Math.round(webPrices.max)}, modelo: llama-4-scout (vision) / llama-3.3-70b (texto)`);
 
     // Attempt 1: with photos (vision)
     try {
-      return await this.callGroq(dto, mlPrices, dto.photos);
+      return await this.callGroq(dto, webPrices, dto.photos);
     } catch (err: unknown) {
       const status = (err as { status?: number }).status;
       if (status !== 429) throw err;
@@ -44,7 +44,7 @@ export class AiEvaluationService {
 
     // Attempt 2: text-only
     try {
-      return await this.callGroq(dto, mlPrices, []);
+      return await this.callGroq(dto, webPrices, []);
     } catch (err: unknown) {
       const status = (err as { status?: number }).status;
       if (status !== 429) throw err;
@@ -91,19 +91,29 @@ export class AiEvaluationService {
     ]);
 
     const json = JSON.parse(raw) as Partial<AiValuationResult>;
-    const resale = Math.max(0, Number(json.resale_value_pen) || 0);
+
+    let resale  = Math.max(0, Number(json.resale_value_pen)  || 0);
+    let market  = Math.max(0, Number(json.market_value_pen)  || 0);
+
+    // Hard price cap: if we have a web reference, the AI cannot value above
+    // the cheapest price found + 5% tolerance (condition adjustments go DOWN, not up)
+    if (ml.min > 0) {
+      resale  = Math.min(resale,  Math.round(ml.min * 1.05));
+      market  = Math.min(market,  Math.round(ml.min * 1.25));
+      this.logger.log(`Price cap applied — web min: S/${Math.round(ml.min)}, capped resale: S/${resale}, market: S/${market}`);
+    }
 
     return {
-      condition_score: Math.min(10, Math.max(0, Number(json.condition_score) || 7)),
-      market_value_pen: Math.max(0, Number(json.market_value_pen) || 0),
-      resale_value_pen: resale,
-      max_loan_pen: Math.round(resale * 0.8),
+      condition_score:      Math.min(10, Math.max(0, Number(json.condition_score) || 7)),
+      market_value_pen:     market,
+      resale_value_pen:     resale,
+      max_loan_pen:         Math.round(resale * 0.8),
       depreciation_factors: Array.isArray(json.depreciation_factors)
         ? (json.depreciation_factors as string[]).slice(0, 5)
         : [],
-      confidence: Math.min(1, Math.max(0, Number(json.confidence) || 0.7)),
-      reasoning: String(json.reasoning || ''),
-      visual_condition: String(json.visual_condition || dto.condition),
+      confidence:           Math.min(1, Math.max(0, Number(json.confidence) || 0.7)),
+      reasoning:            String(json.reasoning || ''),
+      visual_condition:     String(json.visual_condition || dto.condition),
     };
   }
 
@@ -137,22 +147,94 @@ export class AiEvaluationService {
     return data.choices[0]?.message?.content ?? '{}';
   }
 
-  // ── MercadoLibre ─────────────────────────────────────────────────────────────
+  // Plain chat (no json_object format — used for compound-beta web search)
+  private async groqChatRaw(
+    model: string,
+    messages: { role: string; content: unknown }[],
+  ): Promise<string> {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.groqKey}`,
+      },
+      body: JSON.stringify({ model, messages, max_tokens: 256, temperature: 0.1 }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Groq ${res.status}: ${body.slice(0, 200)}`);
+    }
+    const data = (await res.json()) as { choices: { message: { content: string } }[] };
+    return data.choices[0]?.message?.content ?? '';
+  }
 
-  private async fetchMercadoLibrePrices(
+  // ── Web price search (Groq compound-beta) ────────────────────────────────────
+
+  private async fetchPricesViaWebSearch(
+    dto: ValuateDeviceDto,
+  ): Promise<{ min: number; max: number; avg: number }> {
+    // Step 1: live web search via compound-beta
+    const webResult = await this.searchWebCheapestPrice(dto);
+    if (webResult.min > 0) return webResult;
+
+    // Step 2: fallback — ask llama-3.3-70b for its training-data knowledge of typical Peruvian prices
+    return this.estimatePriceFromKnowledge(dto);
+  }
+
+  private async searchWebCheapestPrice(
     dto: ValuateDeviceDto,
   ): Promise<{ min: number; max: number; avg: number }> {
     try {
-      const q = encodeURIComponent(`${dto.brand} ${dto.model} ${dto.manufacture_year}`);
-      const url = `https://api.mercadolibre.com/sites/MPE/search?q=${q}&limit=10&condition=used`;
-      const res = await fetch(url);
-      if (!res.ok) return { min: 0, max: 0, avg: 0 };
-      const data = (await res.json()) as { results?: { price: number }[] };
-      const prices = (data.results ?? []).map((i) => i.price).filter((p) => p > 100);
-      if (prices.length === 0) return { min: 0, max: 0, avg: 0 };
-      const min = Math.min(...prices);
-      const max = Math.max(...prices);
-      const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
+      const specs = `${dto.brand} ${dto.model} ${dto.manufacture_year} ${dto.ram} ${dto.storage}`;
+      const raw = await this.groqChatRaw('compound-beta', [
+        {
+          role: 'user',
+          content:
+            `Busca en Google el precio MÁS BARATO de "${specs}" usado en Perú ahora mismo. ` +
+            `Revisa OLX Perú, Mercado Libre Perú, Facebook Marketplace Perú, Juntoz, Linio. ` +
+            `Necesito el precio MÍNIMO encontrado en listados activos. ` +
+            `Responde SOLO con este JSON sin markdown:\n` +
+            `{"min_price_pen":número_entero,"max_price_pen":número_entero,"avg_price_pen":número_entero}\n` +
+            `Valores en soles peruanos (PEN). USD × 3.75 = PEN.`,
+        },
+      ]);
+      const match = raw.match(/\{[^{}]+\}/);
+      if (!match) return { min: 0, max: 0, avg: 0 };
+      const json = JSON.parse(match[0]) as { min_price_pen?: unknown; max_price_pen?: unknown; avg_price_pen?: unknown };
+      const min = Math.max(0, Number(json.min_price_pen) || 0);
+      const max = Math.max(0, Number(json.max_price_pen) || 0);
+      const avg = Math.max(0, Number(json.avg_price_pen) || 0);
+      if (min === 0 && max === 0 && avg === 0) return { min: 0, max: 0, avg: 0 };
+      this.logger.log(`compound-beta web price — S/ ${min}–${max} avg ${avg}`);
+      return { min, max, avg };
+    } catch (err) {
+      this.logger.warn(`compound-beta search failed: ${String(err).slice(0, 100)}`);
+      return { min: 0, max: 0, avg: 0 };
+    }
+  }
+
+  private async estimatePriceFromKnowledge(
+    dto: ValuateDeviceDto,
+  ): Promise<{ min: number; max: number; avg: number }> {
+    try {
+      const specs = `${dto.brand} ${dto.model} ${dto.manufacture_year} ${dto.ram} ${dto.storage}`;
+      const raw = await this.groqChatRaw('llama-3.3-70b-versatile', [
+        {
+          role: 'user',
+          content:
+            `¿Cuál es el precio más barato y el precio promedio de un "${specs}" usado en Perú (segunda mano)? ` +
+            `Sé conservador y usa el precio más bajo posible del mercado peruano informal (OLX, Facebook, ML). ` +
+            `Responde SOLO con este JSON sin markdown:\n` +
+            `{"min_price_pen":número_entero,"max_price_pen":número_entero,"avg_price_pen":número_entero}`,
+        },
+      ]);
+      const match = raw.match(/\{[^{}]+\}/);
+      if (!match) return { min: 0, max: 0, avg: 0 };
+      const json = JSON.parse(match[0]) as { min_price_pen?: unknown; max_price_pen?: unknown; avg_price_pen?: unknown };
+      const min = Math.max(0, Number(json.min_price_pen) || 0);
+      const max = Math.max(0, Number(json.max_price_pen) || 0);
+      const avg = Math.max(0, Number(json.avg_price_pen) || 0);
+      if (min > 0) this.logger.log(`LLM knowledge price — S/ ${min}–${max} avg ${avg}`);
       return { min, max, avg };
     } catch {
       return { min: 0, max: 0, avg: 0 };
@@ -165,14 +247,18 @@ export class AiEvaluationService {
     return `Eres un auditor técnico experto en valuación de dispositivos electrónicos para Jemacash, \
 una fintech peruana que otorga préstamos con garantía tecnológica.
 
-Analiza las especificaciones del dispositivo (y las fotos si están disponibles) para estimar \
-su valor de mercado actual en soles peruanos (PEN), tomando como referencia MercadoLibre Perú.
+Tu objetivo es estimar el precio MÁS CONSERVADOR posible basándote en el precio más barato \
+disponible en el mercado peruano de segunda mano (OLX, Facebook Marketplace, Mercado Libre). \
+NUNCA sobrevalores un dispositivo: si hay duda, usa el precio más bajo.
+
+REGLA CRÍTICA: El campo "resale_value_pen" debe ser igual o MENOR al precio mínimo web proporcionado. \
+Si el dispositivo tiene desgaste o daños en fotos, reduce el precio proporcionalmente.
 
 RESPONDE ÚNICAMENTE con JSON válido sin markdown, con estas claves:
 {
   "condition_score": número del 0 al 10,
-  "market_value_pen": número entero en soles,
-  "resale_value_pen": número entero (~10% menos que market_value_pen),
+  "market_value_pen": número entero en soles (precio típico mercado peruano segunda mano),
+  "resale_value_pen": número entero (precio más bajo posible — igual o menor al precio mínimo web),
   "depreciation_factors": array de strings con factores que reducen el valor (máximo 5, en español),
   "confidence": número del 0 al 1,
   "reasoning": string de máximo 2 oraciones,
@@ -185,9 +271,12 @@ RESPONDE ÚNICAMENTE con JSON válido sin markdown, con estas claves:
     ml: { min: number; max: number; avg: number },
     photoCount: number,
   ): string {
-    const mlLine = ml.avg > 0
-      ? `Precios actuales en MercadoLibre Perú (usado): S/ ${Math.round(ml.min)} – S/ ${Math.round(ml.max)} (promedio S/ ${Math.round(ml.avg)})`
-      : 'No se encontraron precios de referencia en MercadoLibre Perú.';
+    const mlLine = ml.min > 0
+      ? `PRECIO WEB (referencia obligatoria):
+  - Precio MÁS BARATO encontrado: S/ ${Math.round(ml.min)} ← usa esto como techo para resale_value_pen
+  - Precio típico: S/ ${Math.round(ml.max)} (promedio S/ ${Math.round(ml.avg)})
+  - RESTRICCIÓN: resale_value_pen NO puede superar S/ ${Math.round(ml.min)}`
+      : 'Sin referencia web — estima de forma muy conservadora usando el mercado informal peruano.';
 
     return `Analiza este dispositivo para valuación de garantía de préstamo:
 
@@ -204,7 +293,7 @@ ESPECIFICACIONES:
 REFERENCIA DE MERCADO:
 ${mlLine}
 
-${photoCount > 0 ? `Se adjuntan ${photoCount} foto(s) del dispositivo. Analiza daños físicos, desgaste y consistencia con la condición declarada.` : 'Sin fotos — valúa basándote en especificaciones y referencia de mercado.'}`;
+${photoCount > 0 ? `Se adjuntan ${photoCount} foto(s) del dispositivo. Analiza daños físicos, desgaste y consistencia con la condición declarada. Usa el precio web como referencia para resale_value_pen.` : 'Sin fotos — valúa basándote en especificaciones y referencia web de precio.'}`;
   }
 
   // ── Mock ─────────────────────────────────────────────────────────────────────

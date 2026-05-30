@@ -13,11 +13,15 @@ import {
 } from './entities/loan-application.entity';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { EvaluationService } from '../evaluation/evaluation.service';
+import { Guarantee, GuaranteeStatus } from '../guarantees/entities/guarantee.entity';
+
 @Injectable()
 export class ApplicationsService {
   constructor(
     @InjectRepository(LoanApplication)
     private readonly repo: Repository<LoanApplication>,
+    @InjectRepository(Guarantee)
+    private readonly guaranteeRepo: Repository<Guarantee>,
     @Inject(forwardRef(() => EvaluationService))
     private readonly evaluationService: EvaluationService,
   ) {}
@@ -50,6 +54,14 @@ export class ApplicationsService {
 
     app.status = ApplicationStatus.SUBMITTED;
     const saved = await this.repo.save(app);
+
+    // Pledge the linked guarantee so it cannot be reused
+    if (saved.guarantee_id) {
+      await this.guaranteeRepo.update(
+        { id: saved.guarantee_id, user_id: userId },
+        { status: GuaranteeStatus.PLEDGED },
+      );
+    }
 
     await this.evaluationService.initiate(saved.id);
 

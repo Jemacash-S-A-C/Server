@@ -29,6 +29,10 @@ export class GuaranteesService {
   async updateAiFields(id: string, userId: string, dto: UpdateGuaranteeAiDto): Promise<Guarantee> {
     const g = await this.findOne(id, userId);
     Object.assign(g, dto);
+    // Keep estimated_value in sync so every component that reads it shows a real number
+    if (dto.ai_resale_value !== undefined && dto.ai_resale_value > 0) {
+      g.estimated_value = dto.ai_resale_value;
+    }
     return this.repo.save(g);
   }
 }
