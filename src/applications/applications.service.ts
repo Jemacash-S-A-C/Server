@@ -74,4 +74,10 @@ export class ApplicationsService {
     app.status = status;
     return this.repo.save(app);
   }
+
+  // Provisional bypass — remove when real admin approval flow is implemented
+  async approveBypass(id: string, userId: string): Promise<LoanApplication> {
+    await this.findOne(id, userId);
+    return this.updateStatus(id, ApplicationStatus.APPROVED);
+  }
 }

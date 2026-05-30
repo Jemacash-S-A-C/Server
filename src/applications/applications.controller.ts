@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApplicationsService } from './applications.service';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -28,5 +28,11 @@ export class ApplicationsController {
   @Post(':id/submit')
   submit(@Param('id') id: string, @CurrentUser() user: User) {
     return this.applicationsService.submit(id, user.id);
+  }
+
+  // Provisional bypass — remove when real admin approval flow is implemented
+  @Patch(':id/approve-bypass')
+  approveBypass(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.applicationsService.approveBypass(id, user.id);
   }
 }
