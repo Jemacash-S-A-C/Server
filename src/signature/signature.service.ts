@@ -10,7 +10,7 @@ import { Repository } from 'typeorm';
 import { Signature } from './entities/signature.entity';
 import { CreateSignatureDto } from './dto/create-signature.dto';
 import { LoanApplication, ApplicationStatus } from '../applications/entities/loan-application.entity';
-import { Guarantee } from '../guarantees/entities/guarantee.entity';
+import { Guarantee, GuaranteeStatus } from '../guarantees/entities/guarantee.entity';
 import { Document, DocumentType } from '../documents/entities/document.entity';
 import { ApplicationsService } from '../applications/applications.service';
 
@@ -49,6 +49,15 @@ export class SignatureService {
 
     const sig = this.repo.create({ application_id: applicationId, ...dto });
     const saved = await this.repo.save(sig);
+
+    // Pledge the guarantee now that the user has actually committed by signing
+    const app = await this.appRepo.findOne({ where: { id: applicationId } });
+    if (app?.guarantee_id) {
+      await this.guaranteeRepo.update(
+        { id: app.guarantee_id },
+        { status: GuaranteeStatus.PLEDGED },
+      );
+    }
 
     // Evaluate whether conditions allow immediate approval or need manual review
     const newStatus = await this.evaluateAutoApprove(applicationId, userId);

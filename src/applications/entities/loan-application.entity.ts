@@ -18,6 +18,7 @@ export enum ApplicationStatus {
   APPROVED   = 'approved',
   DISBURSED  = 'disbursed',
   DEFAULTED  = 'defaulted',
+  CANCELLED  = 'cancelled',
   REJECTED   = 'rejected',
 }
 

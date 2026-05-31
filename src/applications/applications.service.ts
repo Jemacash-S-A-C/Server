@@ -55,15 +55,35 @@ export class ApplicationsService {
     app.status = ApplicationStatus.SUBMITTED;
     const saved = await this.repo.save(app);
 
-    // Pledge the linked guarantee so it cannot be reused
+    // NOTE: the guarantee is pledged only when the user actually signs the contract,
+    // not here — so an abandoned application does not lock the guarantee.
+
+    await this.evaluationService.initiate(saved.id);
+
+    return saved;
+  }
+
+  /**
+   * User-initiated cancellation before signing.
+   * Sets status to CANCELLED and frees the guarantee (in case it was ever pledged).
+   */
+  async cancel(id: string, userId: string): Promise<LoanApplication> {
+    const app = await this.findOne(id, userId);
+
+    if (!['draft', 'submitted'].includes(app.status)) {
+      throw new BadRequestException('Only draft or submitted applications can be cancelled');
+    }
+
+    app.status = ApplicationStatus.CANCELLED;
+    const saved = await this.repo.save(app);
+
+    // Free the guarantee regardless — defensive in case it was pledged
     if (saved.guarantee_id) {
       await this.guaranteeRepo.update(
         { id: saved.guarantee_id, user_id: userId },
-        { status: GuaranteeStatus.PLEDGED },
+        { status: GuaranteeStatus.ACTIVE },
       );
     }
-
-    await this.evaluationService.initiate(saved.id);
 
     return saved;
   }

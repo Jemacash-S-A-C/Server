@@ -36,6 +36,12 @@ export class ApplicationsController {
     return this.applicationsService.approveBypass(id, user.id);
   }
 
+  /** User cancels their own application before signing. */
+  @Patch(':id/cancel')
+  cancel(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.applicationsService.cancel(id, user.id);
+  }
+
   /**
    * Triggered after physical device pickup and on-site verification.
    * Provisional: will be restricted to agent/admin role.
