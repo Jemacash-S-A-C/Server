@@ -17,6 +17,7 @@ export enum ApplicationStatus {
   SIGNED     = 'signed',
   APPROVED   = 'approved',
   DISBURSED  = 'disbursed',
+  DEFAULTED  = 'defaulted',
   REJECTED   = 'rejected',
 }
 
@@ -47,6 +48,10 @@ export class LoanApplication {
 
   @Column({ type: 'enum', enum: ApplicationStatus, default: ApplicationStatus.DRAFT })
   status: ApplicationStatus;
+
+  /** Set when the application transitions to DISBURSED. Used to compute the payment schedule. */
+  @Column({ type: 'timestamptz', nullable: true, default: null })
+  disbursed_at: Date | null;
 
   @CreateDateColumn()
   created_at: Date;

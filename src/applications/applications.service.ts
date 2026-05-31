@@ -83,7 +83,7 @@ export class ApplicationsService {
 
   /**
    * Triggered by the field agent after physical device collection and verification.
-   * Transitions approved → disbursed and releases the guarantee from pledged status.
+   * Transitions approved → disbursed, stamps disbursed_at, keeps guarantee as pledged.
    * Provisional: will be restricted to agent/admin role once that flow is built.
    */
   async disburse(id: string, userId: string): Promise<LoanApplication> {
@@ -91,6 +91,31 @@ export class ApplicationsService {
     if (app.status !== ApplicationStatus.APPROVED) {
       throw new BadRequestException('Only approved applications can be disbursed');
     }
-    return this.updateStatus(id, ApplicationStatus.DISBURSED);
+    app.status      = ApplicationStatus.DISBURSED;
+    app.disbursed_at = new Date();
+    return this.repo.save(app);
+  }
+
+  /**
+   * Declares a loan in default: sets status to DEFAULTED and guarantee to SEIZED.
+   * Called by the DefaultsService cron job — no userId check (internal use).
+   */
+  async declareDefault(id: string): Promise<LoanApplication> {
+    const app = await this.repo.findOne({ where: { id } });
+    if (!app) throw new NotFoundException('Application not found');
+    if (app.status !== ApplicationStatus.DISBURSED) {
+      throw new BadRequestException('Only disbursed applications can be declared in default');
+    }
+    app.status = ApplicationStatus.DEFAULTED;
+    const saved = await this.repo.save(app);
+
+    if (saved.guarantee_id) {
+      await this.guaranteeRepo.update(
+        { id: saved.guarantee_id },
+        { status: GuaranteeStatus.SEIZED },
+      );
+    }
+
+    return saved;
   }
 }

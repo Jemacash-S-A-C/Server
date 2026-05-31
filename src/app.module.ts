@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { MailModule } from './mail/mail.module';
 import { AuthModule } from './auth/auth.module';
 import { TwoFactorModule } from './auth/two-factor/two-factor.module';
@@ -12,6 +13,7 @@ import { SignatureModule } from './signature/signature.module';
 import { PaymentsModule } from './payments/payments.module';
 import { DocumentsModule } from './documents/documents.module';
 import { AiEvaluationModule } from './ai-evaluation/ai-evaluation.module';
+import { DefaultsModule } from './defaults/defaults.module';
 import { Document } from './documents/entities/document.entity';
 import { User } from './users/entities/user.entity';
 import { Session } from './users/entities/session.entity';
@@ -36,6 +38,7 @@ import { PasswordResetToken } from './auth/entities/password-reset-token.entity'
       synchronize: process.env.NODE_ENV !== 'production',
       logging: process.env.NODE_ENV === 'development',
     }),
+    ScheduleModule.forRoot(),
     MailModule,
     AuthModule,
     TwoFactorModule,
@@ -47,6 +50,7 @@ import { PasswordResetToken } from './auth/entities/password-reset-token.entity'
     PaymentsModule,
     DocumentsModule,
     AiEvaluationModule,
+    DefaultsModule,
   ],
 })
 export class AppModule {}

@@ -13,6 +13,7 @@ export enum GuaranteeStatus {
   ACTIVE = 'active',
   PLEDGED = 'pledged',
   RELEASED = 'released',
+  SEIZED = 'seized',
 }
 
 @Entity('guarantees')
