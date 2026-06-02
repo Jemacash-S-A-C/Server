@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Guarantee, GuaranteeStatus } from './entities/guarantee.entity';
 import { CreateGuaranteeDto } from './dto/create-guarantee.dto';
 import { UpdateGuaranteeAiDto } from './dto/update-guarantee-ai.dto';
+import { ReportAuditDto } from './dto/report-audit.dto';
 
 @Injectable()
 export class GuaranteesService {
@@ -37,6 +38,26 @@ export class GuaranteesService {
     if (g.status === GuaranteeStatus.PENDING_EVALUATION) {
       g.status = GuaranteeStatus.ACTIVE;
     }
+    return this.repo.save(g);
+  }
+
+  async reportAudit(id: string, userId: string, dto: ReportAuditDto): Promise<Guarantee> {
+    const g = await this.findOne(id, userId);
+    const prevSpecs = g.specs ?? {};
+    const mergedSpecs: Record<string, string> = {
+      ...prevSpecs,
+      ...dto.specs,
+      audit_verified: 'true',
+      audit_source: 'local_agent',
+      audit_completed_at: new Date().toISOString(),
+    };
+
+    g.serial_number = dto.serial_number;
+    if (dto.brand) g.brand = dto.brand;
+    if (dto.model) g.model = dto.model;
+    if (dto.manufacture_year) g.manufacture_year = dto.manufacture_year;
+    g.specs = mergedSpecs;
+
     return this.repo.save(g);
   }
 }
