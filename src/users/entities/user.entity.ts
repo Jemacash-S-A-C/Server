@@ -35,7 +35,7 @@ export class User {
   @Column({ type: 'boolean', default: false })
   totp_enabled: boolean;
 
-  @Column({ type: 'varchar', length: 20, nullable: true, default: null })
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
   sms_2fa_phone: string | null;
 
   @Column({ type: 'boolean', default: false })
