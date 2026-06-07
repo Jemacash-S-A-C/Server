@@ -12,6 +12,7 @@ import {
   ApplicationStatus,
 } from './entities/loan-application.entity';
 import { CreateApplicationDto } from './dto/create-application.dto';
+import { UpdateApplicationDto } from './dto/update-application.dto';
 import { EvaluationService } from '../evaluation/evaluation.service';
 import { Guarantee, GuaranteeStatus } from '../guarantees/entities/guarantee.entity';
 
@@ -42,6 +43,17 @@ export class ApplicationsService {
 
   async create(userId: string, dto: CreateApplicationDto): Promise<LoanApplication> {
     const app = this.repo.create({ ...dto, user_id: userId, status: ApplicationStatus.DRAFT });
+    return this.repo.save(app);
+  }
+
+  async update(id: string, userId: string, dto: UpdateApplicationDto): Promise<LoanApplication> {
+    const app = await this.findOne(id, userId);
+    if (app.status !== ApplicationStatus.DRAFT) {
+      throw new BadRequestException('Only draft applications can be updated');
+    }
+    if (dto.amount      !== undefined) app.amount      = dto.amount;
+    if (dto.term_months !== undefined) app.term_months = dto.term_months;
+    if (dto.guarantee_id !== undefined) app.guarantee_id = dto.guarantee_id;
     return this.repo.save(app);
   }
 

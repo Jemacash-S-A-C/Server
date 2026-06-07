@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Guarantee, GuaranteeStatus } from './entities/guarantee.entity';
 import { CreateGuaranteeDto } from './dto/create-guarantee.dto';
 import { UpdateGuaranteeAiDto } from './dto/update-guarantee-ai.dto';
+import { ReportAuditDto } from './dto/report-audit.dto';
 
 @Injectable()
 export class GuaranteesService {
@@ -38,5 +39,73 @@ export class GuaranteesService {
       g.status = GuaranteeStatus.ACTIVE;
     }
     return this.repo.save(g);
+  }
+
+  async reportAudit(id: string, userId: string, dto: ReportAuditDto): Promise<Guarantee> {
+    const g = await this.findOne(id, userId);
+    const prevSpecs = g.specs ?? {};
+
+    const { major, notes } = this.checkDiscrepancies(g, dto);
+
+    const mergedSpecs: Record<string, string> = {
+      ...prevSpecs,
+      ...dto.specs,
+      audit_verified: major ? 'discrepancy' : 'true',
+      audit_source: 'local_agent',
+      audit_completed_at: new Date().toISOString(),
+      ...(major ? { audit_discrepancy: 'major', audit_discrepancy_notes: notes ?? '' } : {}),
+    };
+
+    if (!major) {
+      g.serial_number = dto.serial_number;
+      if (dto.brand) g.brand = dto.brand;
+      if (dto.model) g.model = dto.model;
+      if (dto.manufacture_year) g.manufacture_year = dto.manufacture_year;
+    }
+    g.specs = mergedSpecs;
+
+    return this.repo.save(g);
+  }
+
+  private checkDiscrepancies(
+    g: Guarantee,
+    dto: ReportAuditDto,
+  ): { major: boolean; notes?: string } {
+    const issues: string[] = [];
+
+    // Brand check (normalize and compare)
+    if (dto.brand && g.brand) {
+      const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const declared = normalize(g.brand);
+      const audited  = normalize(dto.brand);
+      if (declared.length > 2 && audited.length > 2) {
+        if (!declared.includes(audited) && !audited.includes(declared)) {
+          issues.push(`Marca declarada: "${g.brand}" vs auditada: "${dto.brand}"`);
+        }
+      }
+    }
+
+    // RAM check (allow 25% tolerance for OS overhead)
+    const declaredRam = parseInt((g.specs?.ram ?? '').replace(/[^0-9]/g, '') || '0', 10);
+    const auditRam    = parseInt(dto.specs?.total_ram_gb ?? dto.specs?.ram ?? '0', 10);
+    if (declaredRam > 0 && auditRam > 0) {
+      if (Math.abs(declaredRam - auditRam) / declaredRam > 0.25) {
+        issues.push(`RAM declarada: ${g.specs?.ram} vs auditada: ${auditRam} GB`);
+      }
+    }
+
+    // Storage check (allow 20% tolerance for drive capacity reporting differences)
+    const declaredStorage = parseInt((g.specs?.storage ?? '').replace(/[^0-9]/g, '') || '0', 10);
+    const auditStorage    = parseInt(dto.specs?.primary_disk_size_gb ?? dto.specs?.storage ?? '0', 10);
+    if (declaredStorage > 0 && auditStorage > 0) {
+      if (Math.abs(declaredStorage - auditStorage) / declaredStorage > 0.20) {
+        issues.push(`Almacenamiento declarado: ${g.specs?.storage} vs auditado: ${auditStorage} GB`);
+      }
+    }
+
+    return {
+      major: issues.length > 0,
+      notes: issues.length > 0 ? issues.join(' | ') : undefined,
+    };
   }
 }

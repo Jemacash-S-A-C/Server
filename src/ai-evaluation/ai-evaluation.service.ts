@@ -10,6 +10,8 @@ export interface AiValuationResult {
   confidence: number;
   reasoning: string;
   visual_condition: string;
+  device_match_valid: boolean;
+  match_rejection_reason?: string;
 }
 
 @Injectable()
@@ -42,9 +44,9 @@ export class AiEvaluationService {
       this.logger.warn('Groq 429 con fotos — reintentando sin imágenes');
     }
 
-    // Attempt 2: text-only
+    // Attempt 2: text-only (mark as fallback so device_match_valid isn't forced false)
     try {
-      return await this.callGroq(dto, webPrices, []);
+      return await this.callGroq(dto, webPrices, [], true);
     } catch (err: unknown) {
       const status = (err as { status?: number }).status;
       if (status !== 429) throw err;
@@ -72,6 +74,8 @@ export class AiEvaluationService {
     dto: ValuateDeviceDto,
     ml: { min: number; max: number; avg: number },
     photos: string[],
+    /** True when this is a text-only retry after a rate-limited vision attempt */
+    textOnlyFallback = false,
   ): Promise<AiValuationResult> {
     const specsText = this.buildSpecsText(dto, ml, photos.length);
 
@@ -79,9 +83,11 @@ export class AiEvaluationService {
       | { type: 'text'; text: string }
       | { type: 'image_url'; image_url: { url: string } };
 
+    const PHOTO_LABELS = ['Vista frontal del dispositivo', 'Vista trasera del dispositivo', 'Vista general del dispositivo'];
     const content: ContentPart[] = [{ type: 'text', text: specsText }];
-    for (const photo of photos) {
-      content.push({ type: 'image_url', image_url: { url: photo } });
+    for (let i = 0; i < photos.length; i++) {
+      content.push({ type: 'text', text: `--- ${PHOTO_LABELS[i] ?? `Foto ${i + 1}`} ---` });
+      content.push({ type: 'image_url', image_url: { url: photos[i] } });
     }
 
     const model = photos.length > 0 ? 'meta-llama/llama-4-scout-17b-16e-instruct' : 'llama-3.3-70b-versatile';
@@ -95,12 +101,16 @@ export class AiEvaluationService {
     let resale  = Math.max(0, Number(json.resale_value_pen)  || 0);
     let market  = Math.max(0, Number(json.market_value_pen)  || 0);
 
-    // Hard price cap: if we have a web reference, the AI cannot value above
-    // the cheapest price found + 5% tolerance (condition adjustments go DOWN, not up)
+    // Hard price cap: if we have a web reference, cap based on declared condition so
+    // different conditions always produce meaningfully different prices.
+    // excelente → up to 100% of web min; bueno → up to 75%; regular → up to 55%
     if (ml.min > 0) {
-      resale  = Math.min(resale,  Math.round(ml.min * 1.05));
-      market  = Math.min(market,  Math.round(ml.min * 1.25));
-      this.logger.log(`Price cap applied — web min: S/${Math.round(ml.min)}, capped resale: S/${resale}, market: S/${market}`);
+      const condCap = dto.condition === 'excelente' ? 1.0
+        : dto.condition === 'bueno'     ? 0.75
+        : 0.55;
+      resale  = Math.min(resale,  Math.round(ml.min * condCap));
+      market  = Math.min(market,  Math.round(ml.min * (condCap + 0.20)));
+      this.logger.log(`Price cap applied — web min: S/${Math.round(ml.min)}, condition: ${dto.condition}, cap: ${condCap}, capped resale: S/${resale}, market: S/${market}`);
     }
 
     return {
@@ -114,6 +124,14 @@ export class AiEvaluationService {
       confidence:           Math.min(1, Math.max(0, Number(json.confidence) || 0.7)),
       reasoning:            String(json.reasoning || ''),
       visual_condition:     String(json.visual_condition || dto.condition),
+      // In text-only fallback the AI can't see photos → don't penalise the user
+      // for a rate-limit retry; treat identity as unverifiable rather than invalid.
+      device_match_valid: textOnlyFallback && dto.photos.length > 0
+        ? true
+        : json.device_match_valid === true,
+      match_rejection_reason: (!textOnlyFallback || dto.photos.length === 0) && !json.device_match_valid
+        ? (json.match_rejection_reason ? String(json.match_rejection_reason) : undefined)
+        : undefined,
     };
   }
 
@@ -132,7 +150,7 @@ export class AiEvaluationService {
         messages,
         response_format: { type: 'json_object' },
         max_tokens: 1024,
-        temperature: 0.2,
+        temperature: 0.4,
       }),
     });
 
@@ -251,8 +269,21 @@ Tu objetivo es estimar el precio MÁS CONSERVADOR posible basándote en el preci
 disponible en el mercado peruano de segunda mano (OLX, Facebook Marketplace, Mercado Libre). \
 NUNCA sobrevalores un dispositivo: si hay duda, usa el precio más bajo.
 
-REGLA CRÍTICA: El campo "resale_value_pen" debe ser igual o MENOR al precio mínimo web proporcionado. \
-Si el dispositivo tiene desgaste o daños en fotos, reduce el precio proporcionalmente.
+REGLA CRÍTICA DE PRECIO POR CONDICIÓN (obligatoria):
+- Condición "excelente": resale_value_pen puede estar cerca del precio mínimo web.
+- Condición "bueno": resale_value_pen debe ser un 25-35% MENOR al precio mínimo web.
+- Condición "regular": resale_value_pen debe ser un 45-55% MENOR al precio mínimo web.
+El sistema aplica un techo automático por condición; si no hay referencia web, aplica el mismo descuento sobre tu estimación base.
+NUNCA devuelvas el mismo precio para condiciones distintas.
+
+VALIDACIÓN DE IDENTIDAD DEL DISPOSITIVO (obligatoria):
+- Analiza CADA foto etiquetada y verifica que el dispositivo mostrado corresponde a la marca y modelo declarados.
+- La foto "Vista frontal" debe mostrar el dispositivo desde el frente. Verifica que el diseño coincide con el modelo declarado.
+- La foto "Vista trasera" debe mostrar la parte trasera. Verifica logotipos y forma física.
+- La foto "Vista general" debe mostrar el dispositivo completo. Confirma que es el mismo dispositivo.
+- Si las fotos muestran claramente un dispositivo DIFERENTE al declarado, o si las fotos son de baja calidad y NO permiten verificar el modelo, establece "device_match_valid": false y explica la razón.
+- Si las fotos son consistentes con el dispositivo declarado, establece "device_match_valid": true.
+- Sin fotos: "device_match_valid" debe ser false.
 
 RESPONDE ÚNICAMENTE con JSON válido sin markdown, con estas claves:
 {
@@ -262,7 +293,9 @@ RESPONDE ÚNICAMENTE con JSON válido sin markdown, con estas claves:
   "depreciation_factors": array de strings con factores que reducen el valor (máximo 5, en español),
   "confidence": número del 0 al 1,
   "reasoning": string de máximo 2 oraciones,
-  "visual_condition": "excelente" | "bueno" | "regular" | "malo"
+  "visual_condition": "excelente" | "bueno" | "regular" | "malo",
+  "device_match_valid": true o false,
+  "match_rejection_reason": string con la razón si device_match_valid es false, o null si es true
 }`;
   }
 
@@ -293,29 +326,64 @@ ESPECIFICACIONES:
 REFERENCIA DE MERCADO:
 ${mlLine}
 
-${photoCount > 0 ? `Se adjuntan ${photoCount} foto(s) del dispositivo. Analiza daños físicos, desgaste y consistencia con la condición declarada. Usa el precio web como referencia para resale_value_pen.` : 'Sin fotos — valúa basándote en especificaciones y referencia web de precio.'}`;
+${photoCount > 0
+  ? `Se adjuntan ${photoCount} foto(s) etiquetadas del dispositivo (frontal, trasera, general). VERIFICA que cada foto muestra el mismo ${dto.brand} ${dto.model} declarado. Analiza daños físicos, desgaste y consistencia con la condición declarada.`
+  : 'Sin fotos — valúa basándote en especificaciones y referencia web de precio. device_match_valid debe ser false porque no se puede verificar visualmente el dispositivo.'}`;
   }
 
   // ── Mock ─────────────────────────────────────────────────────────────────────
 
   private mockValuation(dto: ValuateDeviceDto): AiValuationResult {
-    const base: Record<string, number> = {
-      laptop: 3500, smartphone: 1200, tablet: 900,
-      desktop: 1800, consola: 800, smartwatch: 400,
+    const basePrices: Record<string, number> = {
+      laptop: 2800, smartphone: 950, tablet: 750,
+      desktop: 1600, consola: 700, smartwatch: 320,
     };
-    const baseVal = base[dto.device_category] ?? 1500;
-    const condMult = dto.condition === 'excelente' ? 1.0 : dto.condition === 'bueno' ? 0.8 : 0.6;
-    const market = Math.round(baseVal * condMult * (dto.is_reconditioned ? 0.85 : 1.0));
-    const resale = Math.round(market * 0.9);
+    const baseVal = basePrices[dto.device_category] ?? 1200;
+
+    // Condition — meaningful spread so prices look different per condition
+    const condMult = dto.condition === 'excelente' ? 1.0
+      : dto.condition === 'bueno'     ? 0.72
+      : 0.50;
+
+    // Year depreciation: ~10% per year, floor 35%
+    const currentYear = new Date().getFullYear();
+    const devYear = parseInt(dto.manufacture_year ?? String(currentYear - 3), 10);
+    const age = Math.max(0, currentYear - devYear);
+    const yearMult = Math.max(0.35, 1 - age * 0.10);
+
+    // Brand premium
+    const brand = (dto.brand ?? '').toLowerCase();
+    const brandMult =
+      brand.includes('apple')   ? 1.60 :
+      brand.includes('sony')    ? 1.20 :
+      brand.includes('samsung') ? 1.15 :
+      brand.includes('dell')    ? 1.05 :
+      brand.includes('lenovo') || brand.includes('hp') ? 1.00 :
+      brand.includes('huawei')  ? 0.90 :
+      0.82;
+
+    // RAM / storage bonus (laptops & desktops)
+    let specMult = 1.0;
+    if (['laptop', 'desktop'].includes(dto.device_category)) {
+      const ramGb = parseInt((dto.ram ?? '').replace(/[^0-9]/g, '') || '8', 10);
+      specMult = ramGb >= 32 ? 1.30 : ramGb >= 16 ? 1.15 : ramGb >= 8 ? 1.00 : 0.85;
+    }
+
+    const reconMult = dto.is_reconditioned ? 0.82 : 1.0;
+    const market = Math.round(baseVal * condMult * yearMult * brandMult * specMult * reconMult);
+    const resale = Math.round(market * 0.88);
+
     return {
-      condition_score: condMult === 1.0 ? 9 : condMult === 0.8 ? 7 : 5,
+      condition_score: condMult === 1.0 ? 8.5 : condMult > 0.6 ? 6.0 : 4.0,
       market_value_pen: market,
       resale_value_pen: resale,
       max_loan_pen: Math.round(resale * 0.8),
-      depreciation_factors: ['Modo simulación — configure GROQ_API_KEY para análisis real'],
-      confidence: 0.5,
-      reasoning: 'Valuación simulada. Activa la IA configurando GROQ_API_KEY en server/.env (gratis en console.groq.com).',
+      depreciation_factors: ['Modo simulación — configure GROQ_API_KEY para valuación real con IA'],
+      confidence: 0.45,
+      reasoning: 'Valuación estimada sin IA activa. Configura GROQ_API_KEY en server/.env para activar la valuación real (gratis en console.groq.com).',
       visual_condition: dto.condition,
+      device_match_valid: true,
+      match_rejection_reason: undefined,
     };
   }
 }
