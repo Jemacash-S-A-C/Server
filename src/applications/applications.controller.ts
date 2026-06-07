@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApplicationsService } from './applications.service';
 import { CreateApplicationDto } from './dto/create-application.dto';
+import { UpdateApplicationDto } from './dto/update-application.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
@@ -23,6 +24,12 @@ export class ApplicationsController {
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() user: User) {
     return this.applicationsService.findOne(id, user.id);
+  }
+
+  /** Update amount / term / guarantee on a draft application (resume flow). */
+  @Patch(':id')
+  update(@Param('id') id: string, @CurrentUser() user: User, @Body() dto: UpdateApplicationDto) {
+    return this.applicationsService.update(id, user.id, dto);
   }
 
   @Post(':id/submit')
