@@ -90,7 +90,9 @@ export class PaymentsService {
           },
         });
 
+        console.log('[MP] result:', result.status, result.status_detail, result.id);
         if (result.status !== 'approved') {
+          console.error('[MP] rejected:', result.status, result.status_detail);
           throw new BadRequestException(translateMpRejection(result.status_detail));
         }
 
@@ -98,6 +100,8 @@ export class PaymentsService {
       } catch (err) {
         // Re-throw our own controlled exceptions as-is
         if (err instanceof BadRequestException) throw err;
+        // Log full MP error for debugging
+        console.error('[MP] raw error:', JSON.stringify(err, null, 2));
         // MP SDK throws a raw object on 4xx/5xx — surface a clean message
         throw new BadRequestException(
           'No se pudo procesar el pago con Mercado Pago. Inténtalo de nuevo.',
