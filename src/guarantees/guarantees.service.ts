@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
 import { Guarantee, GuaranteeStatus } from './entities/guarantee.entity';
@@ -38,9 +38,17 @@ export class GuaranteesService {
     return this.repo.save(guarantee);
   }
 
-  /** Promotes a DRAFT guarantee to ACTIVE so it appears in the user's dashboard. */
+  /** Promotes a DRAFT guarantee to ACTIVE so it appears in the user's dashboard.
+   *  Throws BadRequestException if the AI resale value is below the S/ 350 minimum. */
   async confirmGuarantee(id: string, userId: string): Promise<Guarantee> {
     const g = await this.findOne(id, userId);
+    if (g.ai_resale_value !== null && g.ai_resale_value !== undefined) {
+      if (Number(g.ai_resale_value) < 350) {
+        throw new BadRequestException(
+          `El valor de reventa estimado (S/ ${Number(g.ai_resale_value).toFixed(2)}) es menor al mínimo requerido de S/ 350.`,
+        );
+      }
+    }
     g.status = GuaranteeStatus.ACTIVE;
     return this.repo.save(g);
   }
