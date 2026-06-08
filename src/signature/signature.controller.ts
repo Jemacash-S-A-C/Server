@@ -23,8 +23,7 @@ export class SignatureController {
   ) {
     // Verify ownership before proceeding
     await this.applicationsService.findOne(applicationId, user.id);
-    // Service handles both signature creation and status transition (signed or auto-approved)
-    return this.signatureService.create(applicationId, user.id, dto);
+    return this.signatureService.create(applicationId, dto);
   }
 
   @Get()

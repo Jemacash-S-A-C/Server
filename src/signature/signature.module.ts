@@ -4,13 +4,12 @@ import { SignatureController } from './signature.controller';
 import { SignatureService } from './signature.service';
 import { Signature } from './entities/signature.entity';
 import { Guarantee } from '../guarantees/entities/guarantee.entity';
-import { Document } from '../documents/entities/document.entity';
 import { LoanApplication } from '../applications/entities/loan-application.entity';
 import { ApplicationsModule } from '../applications/applications.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Signature, Guarantee, Document, LoanApplication]),
+    TypeOrmModule.forFeature([Signature, Guarantee, LoanApplication]),
     forwardRef(() => ApplicationsModule),
   ],
   controllers: [SignatureController],
