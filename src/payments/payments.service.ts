@@ -1,10 +1,11 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { MercadoPagoConfig, Payment as MpPayment } from 'mercadopago';
+import { MercadoPagoConfig, Preference } from 'mercadopago';
 import { Payment, PaymentMethod, PaymentStatus } from './entities/payment.entity';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { MpChargeDto } from './dto/mp-charge.dto';
+import { MpPreferenceDto } from './dto/mp-preference.dto';
+import { MpConfirmDto } from './dto/mp-confirm.dto';
 
 function generateReference(): string {
   const ts = Date.now().toString(36).toUpperCase();
@@ -17,27 +18,6 @@ function isMpMockMode(): boolean {
   return !token || token.includes('REEMPLAZAR');
 }
 
-// Human-readable messages for MP status_detail codes
-const MP_REJECTION_MESSAGES: Record<string, string> = {
-  cc_rejected_other_reason:           'La tarjeta fue rechazada. Intenta con otra tarjeta.',
-  cc_rejected_insufficient_amount:    'Fondos insuficientes en la tarjeta.',
-  cc_rejected_bad_filled_security_code: 'Código de seguridad incorrecto.',
-  cc_rejected_bad_filled_date:        'Fecha de vencimiento incorrecta.',
-  cc_rejected_bad_filled_other:       'Datos de la tarjeta incorrectos.',
-  cc_rejected_card_disabled:          'La tarjeta está deshabilitada.',
-  cc_rejected_call_for_authorize:     'El banco requiere autorización. Llama a tu banco.',
-  cc_rejected_duplicated_payment:     'Pago duplicado detectado.',
-  cc_rejected_high_risk:              'Pago rechazado por evaluación de riesgo.',
-  cc_amount_rate_limit_exceeded:      'Límite de monto excedido en la tarjeta.',
-  pending_contingency:                'El pago está en proceso, espera unos minutos.',
-  pending_review_manual:              'El pago está en revisión.',
-};
-
-function translateMpRejection(statusDetail?: string | null): string {
-  if (!statusDetail) return 'El pago fue rechazado. Inténtalo de nuevo.';
-  return MP_REJECTION_MESSAGES[statusDetail] ?? 'El pago fue rechazado. Inténtalo de nuevo.';
-}
-
 @Injectable()
 export class PaymentsService {
   constructor(
@@ -45,12 +25,68 @@ export class PaymentsService {
     private readonly repo: Repository<Payment>,
   ) {}
 
-  async mpCharge(userId: string, dto: MpChargeDto): Promise<Payment> {
+  // ── Checkout Pro: create MP preference → returns redirect URL ────────────────
+
+  async mpPreference(
+    userId: string,
+    dto: MpPreferenceDto,
+  ): Promise<{ checkoutUrl: string; isMock: boolean }> {
     const existing = await this.repo.findOne({
       where: { application_id: dto.application_id, cuota_number: dto.cuota_number },
     });
     if (existing) {
       throw new ConflictException(`La cuota ${dto.cuota_number} ya fue pagada.`);
+    }
+
+    if (isMpMockMode()) {
+      return { checkoutUrl: '', isMock: true };
+    }
+
+    const amount = parseFloat(Number(dto.amount).toFixed(2));
+    const client = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN! });
+    const preferenceApi = new Preference(client);
+
+    const frontendUrl = (process.env.FRONTEND_URL ?? 'http://localhost:5173').replace(/\/$/, '');
+
+    const result = await preferenceApi.create({
+      body: {
+        items: [
+          {
+            id: `${dto.application_id}-${dto.cuota_number}`,
+            title: `Cuota ${dto.cuota_number} — Jemacash`,
+            quantity: 1,
+            unit_price: amount,
+            currency_id: 'PEN',
+          },
+        ],
+        payer: { email: dto.email },
+        back_urls: {
+          success: `${frontendUrl}/?mp_status=success`,
+          failure: `${frontendUrl}/?mp_status=failure`,
+          pending: `${frontendUrl}/?mp_status=pending`,
+        },
+        auto_return: 'approved',
+        external_reference: `${dto.application_id}|${dto.cuota_number}`,
+      },
+    });
+
+    const isSandbox = process.env.MP_ACCESS_TOKEN!.startsWith('TEST-');
+    const checkoutUrl = isSandbox
+      ? result.sandbox_init_point!
+      : result.init_point!;
+
+    return { checkoutUrl, isMock: false };
+  }
+
+  // ── Checkout Pro: confirm payment after MP redirect ──────────────────────────
+
+  async mpConfirm(userId: string, dto: MpConfirmDto): Promise<Payment> {
+    const existing = await this.repo.findOne({
+      where: { application_id: dto.application_id, cuota_number: dto.cuota_number },
+    });
+    if (existing) {
+      // Already saved (e.g. double redirect) — return idempotently
+      return existing;
     }
 
     if (dto.cuota_number > 1) {
@@ -64,63 +100,21 @@ export class PaymentsService {
       }
     }
 
-    // MP rejects transaction_amount with more than 2 decimal places
-    const transactionAmount = parseFloat(Number(dto.amount).toFixed(2));
-    let mpPaymentId: string | null = null;
-
-    if (!isMpMockMode()) {
-      const client = new MercadoPagoConfig({
-        accessToken: process.env.MP_ACCESS_TOKEN!,
-      });
-      const paymentApi = new MpPayment(client);
-
-      try {
-        const result = await paymentApi.create({
-          body: {
-            token: dto.token,
-            transaction_amount: transactionAmount,
-            installments: dto.installments,
-            payment_method_id: dto.payment_method_id,
-            issuer_id: dto.issuer_id ? parseInt(dto.issuer_id, 10) : undefined,
-            payer: { email: dto.email },
-            description: `Cuota ${dto.cuota_number} — Jemacash`,
-          },
-          requestOptions: {
-            idempotencyKey: `jemacash-${dto.application_id}-cuota-${dto.cuota_number}`,
-          },
-        });
-
-        console.log('[MP] result:', result.status, result.status_detail, result.id);
-        if (result.status !== 'approved') {
-          console.error('[MP] rejected:', result.status, result.status_detail);
-          throw new BadRequestException(translateMpRejection(result.status_detail));
-        }
-
-        mpPaymentId = String(result.id);
-      } catch (err) {
-        // Re-throw our own controlled exceptions as-is
-        if (err instanceof BadRequestException) throw err;
-        // Log full MP error for debugging
-        console.error('[MP] raw error:', JSON.stringify(err, null, 2));
-        // MP SDK throws a raw object on 4xx/5xx — surface a clean message
-        throw new BadRequestException(
-          'No se pudo procesar el pago con Mercado Pago. Inténtalo de nuevo.',
-        );
-      }
-    }
-
+    const amount = parseFloat(Number(dto.amount).toFixed(2));
     const payment = this.repo.create({
       application_id: dto.application_id,
       user_id: userId,
-      amount: transactionAmount,
+      amount,
       payment_method: PaymentMethod.MERCADOPAGO,
       status: PaymentStatus.COMPLETED,
       cuota_number: dto.cuota_number,
       reference_number: generateReference(),
-      mp_payment_id: mpPaymentId,
+      mp_payment_id: dto.mp_payment_id,
     });
     return this.repo.save(payment);
   }
+
+  // ── Manual payment (BCP, BBVA, Yape, etc.) ──────────────────────────────────
 
   async create(userId: string, dto: CreatePaymentDto): Promise<Payment> {
     const existing = await this.repo.findOne({

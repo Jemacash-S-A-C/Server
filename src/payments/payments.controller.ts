@@ -9,7 +9,8 @@ import {
 } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { MpChargeDto } from './dto/mp-charge.dto';
+import { MpPreferenceDto } from './dto/mp-preference.dto';
+import { MpConfirmDto } from './dto/mp-confirm.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @UseGuards(JwtAuthGuard)
@@ -17,9 +18,16 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 export class PaymentsController {
   constructor(private readonly service: PaymentsService) {}
 
-  @Post('mp-charge')
-  mpCharge(@Request() req, @Body() dto: MpChargeDto) {
-    return this.service.mpCharge(req.user.id, dto);
+  /** Step 1: create MP Checkout Pro preference → returns redirect URL */
+  @Post('mp-preference')
+  mpPreference(@Request() req, @Body() dto: MpPreferenceDto) {
+    return this.service.mpPreference(req.user.id, dto);
+  }
+
+  /** Step 2: confirm payment after MP redirects back */
+  @Post('mp-confirm')
+  mpConfirm(@Request() req, @Body() dto: MpConfirmDto) {
+    return this.service.mpConfirm(req.user.id, dto);
   }
 
   @Post()
