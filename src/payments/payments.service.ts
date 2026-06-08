@@ -65,7 +65,6 @@ export class PaymentsService {
           failure: `${frontendUrl}/?mp_status=failure`,
           pending: `${frontendUrl}/?mp_status=pending`,
         },
-        auto_return: 'approved',
         external_reference: `${dto.application_id}|${dto.cuota_number}`,
       },
     });
