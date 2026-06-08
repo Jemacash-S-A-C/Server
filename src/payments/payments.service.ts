@@ -79,6 +79,7 @@ export class PaymentsService {
           body: {
             token: dto.token,
             transaction_amount: transactionAmount,
+            currency_id: 'PEN',
             installments: dto.installments,
             payment_method_id: dto.payment_method_id,
             issuer_id: dto.issuer_id ? parseInt(dto.issuer_id, 10) : undefined,
