@@ -3,7 +3,8 @@ import { EvaluationStatus } from '../entities/evaluation.entity';
 
 export class UpdateEvaluationDto {
   @IsEnum(EvaluationStatus)
-  status: EvaluationStatus;
+  @IsOptional()
+  status?: EvaluationStatus;
 
   @IsNumber()
   @Min(0)

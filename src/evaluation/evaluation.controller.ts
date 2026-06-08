@@ -27,7 +27,9 @@ export class EvaluationController {
       applicationId,
       dto,
     );
-    await this.applicationsService.updateStatus(applicationId, newApplicationStatus);
+    if (newApplicationStatus !== null) {
+      await this.applicationsService.updateStatus(applicationId, newApplicationStatus);
+    }
     return evaluation;
   }
 }

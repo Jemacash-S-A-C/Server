@@ -31,20 +31,26 @@ export class EvaluationService {
   async update(
     applicationId: string,
     dto: UpdateEvaluationDto,
-  ): Promise<{ evaluation: Evaluation; newApplicationStatus: ApplicationStatus }> {
+  ): Promise<{ evaluation: Evaluation; newApplicationStatus: ApplicationStatus | null }> {
     const ev = await this.findByApplication(applicationId);
 
-    if (ev.status !== EvaluationStatus.PENDING) {
+    // Only block status changes on already-resolved evaluations.
+    // Metadata-only updates (approved_amount, risk_score, notes) are always allowed.
+    if (dto.status !== undefined && ev.status !== EvaluationStatus.PENDING) {
       throw new BadRequestException('Evaluation already resolved');
     }
 
     Object.assign(ev, dto);
     const saved = await this.repo.save(ev);
 
+    // Only change application status when evaluation is explicitly approved/rejected.
+    // A null return means "no application status change needed".
     const newApplicationStatus =
       dto.status === EvaluationStatus.APPROVED
         ? ApplicationStatus.APPROVED
-        : ApplicationStatus.REJECTED;
+        : dto.status === EvaluationStatus.REJECTED
+        ? ApplicationStatus.REJECTED
+        : null;
 
     return { evaluation: saved, newApplicationStatus };
   }
