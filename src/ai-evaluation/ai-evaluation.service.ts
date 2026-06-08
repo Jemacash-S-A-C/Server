@@ -40,8 +40,9 @@ export class AiEvaluationService {
       return await this.callGroq(dto, webPrices, dto.photos);
     } catch (err: unknown) {
       const status = (err as { status?: number }).status;
-      if (status !== 429) throw err;
-      this.logger.warn('Groq 429 con fotos — reintentando sin imágenes');
+      // 429 = rate limit, 413 = payload too large (photos too heavy) → retry without photos
+      if (status !== 429 && status !== 413) throw err;
+      this.logger.warn(`Groq ${status} con fotos — reintentando sin imágenes`);
     }
 
     // Attempt 2: text-only (mark as fallback so device_match_valid isn't forced false)
@@ -49,8 +50,8 @@ export class AiEvaluationService {
       return await this.callGroq(dto, webPrices, [], true);
     } catch (err: unknown) {
       const status = (err as { status?: number }).status;
-      if (status !== 429) throw err;
-      this.logger.warn('Groq 429 texto — cayendo a mock');
+      if (status !== 429 && status !== 413) throw err;
+      this.logger.warn(`Groq ${status} texto — cayendo a mock`);
       return this.mockValuation(dto);
     }
   }
@@ -203,17 +204,13 @@ export class AiEvaluationService {
     dto: ValuateDeviceDto,
   ): Promise<{ min: number; max: number; avg: number }> {
     try {
-      const specs = `${dto.brand} ${dto.model} ${dto.manufacture_year} ${dto.ram} ${dto.storage}`;
+      const specs = `${dto.brand} ${dto.model} ${dto.manufacture_year} ${dto.storage}`;
       const raw = await this.groqChatRaw('compound-beta', [
         {
           role: 'user',
           content:
-            `Busca en Google el precio MÁS BARATO de "${specs}" usado en Perú ahora mismo. ` +
-            `Revisa OLX Perú, Mercado Libre Perú, Facebook Marketplace Perú, Juntoz, Linio. ` +
-            `Necesito el precio MÍNIMO encontrado en listados activos. ` +
-            `Responde SOLO con este JSON sin markdown:\n` +
-            `{"min_price_pen":número_entero,"max_price_pen":número_entero,"avg_price_pen":número_entero}\n` +
-            `Valores en soles peruanos (PEN). USD × 3.75 = PEN.`,
+            `Precio mínimo de "${specs}" usado en Perú (OLX, ML, Facebook). ` +
+            `JSON sin markdown: {"min_price_pen":N,"max_price_pen":N,"avg_price_pen":N} en soles.`,
         },
       ]);
       const match = raw.match(/\{[^{}]+\}/);
