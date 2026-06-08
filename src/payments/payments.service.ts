@@ -1,11 +1,12 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { MercadoPagoConfig, Preference } from 'mercadopago';
+import { MercadoPagoConfig, Preference, Payment as MpPaymentClient } from 'mercadopago';
 import { Payment, PaymentMethod, PaymentStatus } from './entities/payment.entity';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { MpPreferenceDto } from './dto/mp-preference.dto';
 import { MpConfirmDto } from './dto/mp-confirm.dto';
+import { MpCheckDto } from './dto/mp-check.dto';
 
 function generateReference(): string {
   const ts = Date.now().toString(36).toUpperCase();
@@ -109,6 +110,46 @@ export class PaymentsService {
       cuota_number: dto.cuota_number,
       reference_number: generateReference(),
       mp_payment_id: dto.mp_payment_id,
+    });
+    return this.repo.save(payment);
+  }
+
+  // ── Check & confirm payment by querying MP API (no redirect needed) ─────────
+
+  async mpCheck(userId: string, dto: MpCheckDto): Promise<Payment> {
+    // Already saved — return idempotently
+    const existing = await this.repo.findOne({
+      where: { application_id: dto.application_id, cuota_number: dto.cuota_number },
+    });
+    if (existing) return existing;
+
+    if (isMpMockMode()) {
+      throw new NotFoundException('Pago no encontrado en modo mock.');
+    }
+
+    const client = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN! });
+    const paymentApi = new MpPaymentClient(client);
+    const externalRef = `${dto.application_id}|${dto.cuota_number}`;
+
+    const search = await paymentApi.search({
+      options: { external_reference: externalRef },
+    });
+
+    const approved = (search.results ?? []).find((p) => p.status === 'approved');
+    if (!approved) {
+      throw new NotFoundException('No se encontró un pago aprobado para esta cuota. Si ya pagaste, espera unos segundos e intenta de nuevo.');
+    }
+
+    const amount = parseFloat(Number(approved.transaction_amount).toFixed(2));
+    const payment = this.repo.create({
+      application_id: dto.application_id,
+      user_id: userId,
+      amount,
+      payment_method: PaymentMethod.MERCADOPAGO,
+      status: PaymentStatus.COMPLETED,
+      cuota_number: dto.cuota_number,
+      reference_number: generateReference(),
+      mp_payment_id: String(approved.id),
     });
     return this.repo.save(payment);
   }

@@ -11,6 +11,7 @@ import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { MpPreferenceDto } from './dto/mp-preference.dto';
 import { MpConfirmDto } from './dto/mp-confirm.dto';
+import { MpCheckDto } from './dto/mp-check.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @UseGuards(JwtAuthGuard)
@@ -28,6 +29,12 @@ export class PaymentsController {
   @Post('mp-confirm')
   mpConfirm(@Request() req, @Body() dto: MpConfirmDto) {
     return this.service.mpConfirm(req.user.id, dto);
+  }
+
+  /** Step 2 (alt): verify & confirm by querying MP API directly — no redirect needed */
+  @Post('mp-check')
+  mpCheck(@Request() req, @Body() dto: MpCheckDto) {
+    return this.service.mpCheck(req.user.id, dto);
   }
 
   @Post()
