@@ -77,15 +77,17 @@ export class PaymentsService {
     const checkoutUrl = isSandbox ? result.sandbox_init_point! : result.init_point!;
 
     // Save pending record server-side (no localStorage needed)
-    await this.pendingRepo.upsert(
-      {
-        user_id: userId,
-        application_id: dto.application_id,
-        cuota_number: dto.cuota_number,
-        preference_id: result.id!,
-      },
-      ['user_id', 'application_id', 'cuota_number'],
-    );
+    await this.pendingRepo.delete({
+      user_id: userId,
+      application_id: dto.application_id,
+      cuota_number: dto.cuota_number,
+    });
+    await this.pendingRepo.save(this.pendingRepo.create({
+      user_id: userId,
+      application_id: dto.application_id,
+      cuota_number: dto.cuota_number,
+      preference_id: result.id!,
+    }));
 
     return { checkoutUrl, isMock: false };
   }
