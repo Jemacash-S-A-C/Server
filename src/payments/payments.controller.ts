@@ -6,6 +6,7 @@ import {
   Param,
   UseGuards,
   Request,
+  Query,
 } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
@@ -35,6 +36,12 @@ export class PaymentsController {
   @Post('mp-check')
   mpCheck(@Request() req, @Body() dto: MpCheckDto) {
     return this.service.mpCheck(req.user.id, dto);
+  }
+
+  /** Auto-sync: confirm all pending MP payments for this user */
+  @Get('mp-sync')
+  mpSync(@Request() req) {
+    return this.service.mpSync(req.user.id);
   }
 
   @Post()

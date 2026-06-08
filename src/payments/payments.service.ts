@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { MercadoPagoConfig, Preference, Payment as MpPaymentClient } from 'mercadopago';
 import { Payment, PaymentMethod, PaymentStatus } from './entities/payment.entity';
+import { MpPendingPayment } from './entities/mp-pending-payment.entity';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { MpPreferenceDto } from './dto/mp-preference.dto';
 import { MpConfirmDto } from './dto/mp-confirm.dto';
@@ -24,6 +25,8 @@ export class PaymentsService {
   constructor(
     @InjectRepository(Payment)
     private readonly repo: Repository<Payment>,
+    @InjectRepository(MpPendingPayment)
+    private readonly pendingRepo: Repository<MpPendingPayment>,
   ) {}
 
   // ── Checkout Pro: create MP preference → returns redirect URL ────────────────
@@ -71,9 +74,18 @@ export class PaymentsService {
     });
 
     const isSandbox = process.env.MP_ACCESS_TOKEN!.startsWith('TEST-');
-    const checkoutUrl = isSandbox
-      ? result.sandbox_init_point!
-      : result.init_point!;
+    const checkoutUrl = isSandbox ? result.sandbox_init_point! : result.init_point!;
+
+    // Save pending record server-side (no localStorage needed)
+    await this.pendingRepo.upsert(
+      {
+        user_id: userId,
+        application_id: dto.application_id,
+        cuota_number: dto.cuota_number,
+        preference_id: result.id!,
+      },
+      ['user_id', 'application_id', 'cuota_number'],
+    );
 
     return { checkoutUrl, isMock: false };
   }
@@ -85,7 +97,7 @@ export class PaymentsService {
       where: { application_id: dto.application_id, cuota_number: dto.cuota_number },
     });
     if (existing) {
-      // Already saved (e.g. double redirect) — return idempotently
+      await this.pendingRepo.delete({ application_id: dto.application_id, cuota_number: dto.cuota_number, user_id: userId });
       return existing;
     }
 
@@ -111,17 +123,21 @@ export class PaymentsService {
       reference_number: generateReference(),
       mp_payment_id: dto.mp_payment_id,
     });
-    return this.repo.save(payment);
+    const saved = await this.repo.save(payment);
+    await this.pendingRepo.delete({ application_id: dto.application_id, cuota_number: dto.cuota_number, user_id: userId });
+    return saved;
   }
 
-  // ── Check & confirm payment by querying MP API (no redirect needed) ─────────
+  // ── Check & confirm by querying MP API directly ──────────────────────────────
 
   async mpCheck(userId: string, dto: MpCheckDto): Promise<Payment> {
-    // Already saved — return idempotently
     const existing = await this.repo.findOne({
       where: { application_id: dto.application_id, cuota_number: dto.cuota_number },
     });
-    if (existing) return existing;
+    if (existing) {
+      await this.pendingRepo.delete({ application_id: dto.application_id, cuota_number: dto.cuota_number, user_id: userId });
+      return existing;
+    }
 
     if (isMpMockMode()) {
       throw new NotFoundException('Pago no encontrado en modo mock.');
@@ -131,13 +147,10 @@ export class PaymentsService {
     const paymentApi = new MpPaymentClient(client);
     const externalRef = `${dto.application_id}|${dto.cuota_number}`;
 
-    const search = await paymentApi.search({
-      options: { external_reference: externalRef },
-    });
-
+    const search = await paymentApi.search({ options: { external_reference: externalRef } });
     const approved = (search.results ?? []).find((p) => p.status === 'approved');
     if (!approved) {
-      throw new NotFoundException('No se encontró un pago aprobado para esta cuota. Si ya pagaste, espera unos segundos e intenta de nuevo.');
+      throw new NotFoundException('No se encontró un pago aprobado para esta cuota.');
     }
 
     const amount = parseFloat(Number(approved.transaction_amount).toFixed(2));
@@ -151,7 +164,58 @@ export class PaymentsService {
       reference_number: generateReference(),
       mp_payment_id: String(approved.id),
     });
-    return this.repo.save(payment);
+    const saved = await this.repo.save(payment);
+    await this.pendingRepo.delete({ application_id: dto.application_id, cuota_number: dto.cuota_number, user_id: userId });
+    return saved;
+  }
+
+  // ── Sync: auto-confirm all pending MP payments for this user ─────────────────
+
+  async mpSync(userId: string): Promise<Payment[]> {
+    const pending = await this.pendingRepo.find({ where: { user_id: userId } });
+    if (!pending.length || isMpMockMode()) return [];
+
+    const client = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN! });
+    const paymentApi = new MpPaymentClient(client);
+    const confirmed: Payment[] = [];
+
+    for (const p of pending) {
+      try {
+        const externalRef = `${p.application_id}|${p.cuota_number}`;
+        const search = await paymentApi.search({ options: { external_reference: externalRef } });
+        const approved = (search.results ?? []).find((r) => r.status === 'approved');
+        if (!approved) continue;
+
+        // Already saved by another code path?
+        const existing = await this.repo.findOne({
+          where: { application_id: p.application_id, cuota_number: p.cuota_number },
+        });
+        if (existing) {
+          await this.pendingRepo.delete(p.id);
+          confirmed.push(existing);
+          continue;
+        }
+
+        const amount = parseFloat(Number(approved.transaction_amount).toFixed(2));
+        const payment = this.repo.create({
+          application_id: p.application_id,
+          user_id: userId,
+          amount,
+          payment_method: PaymentMethod.MERCADOPAGO,
+          status: PaymentStatus.COMPLETED,
+          cuota_number: p.cuota_number,
+          reference_number: generateReference(),
+          mp_payment_id: String(approved.id),
+        });
+        const saved = await this.repo.save(payment);
+        await this.pendingRepo.delete(p.id);
+        confirmed.push(saved);
+      } catch {
+        // MP API error — keep pending record for next check
+      }
+    }
+
+    return confirmed;
   }
 
   // ── Manual payment (BCP, BBVA, Yape, etc.) ──────────────────────────────────
