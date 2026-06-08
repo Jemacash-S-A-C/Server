@@ -27,6 +27,18 @@ export class GuaranteesController {
     return this.guaranteesService.create(user.id, dto);
   }
 
+  /** Creates a DRAFT guarantee (hidden from dashboard) to give the auditor a target ID. */
+  @Post('draft')
+  createDraft(@CurrentUser() user: User, @Body() dto: CreateGuaranteeDto) {
+    return this.guaranteesService.createDraft(user.id, dto);
+  }
+
+  /** Confirms a DRAFT guarantee → promotes to ACTIVE and makes it visible in the dashboard. */
+  @Patch(':id/confirm')
+  confirm(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.guaranteesService.confirmGuarantee(id, user.id);
+  }
+
   @Patch(':id/ai')
   updateAi(@Param('id') id: string, @CurrentUser() user: User, @Body() dto: UpdateGuaranteeAiDto) {
     return this.guaranteesService.updateAiFields(id, user.id, dto);

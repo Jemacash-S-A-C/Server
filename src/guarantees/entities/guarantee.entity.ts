@@ -9,6 +9,7 @@ import {
 import { User } from '../../users/entities/user.entity';
 
 export enum GuaranteeStatus {
+  DRAFT = 'draft',               // Created for auditor use; hidden from dashboard until confirmed
   PENDING_EVALUATION = 'pending_evaluation',
   ACTIVE = 'active',
   PLEDGED = 'pledged',

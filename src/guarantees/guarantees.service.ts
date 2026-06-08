@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Not, Repository } from 'typeorm';
 import { Guarantee, GuaranteeStatus } from './entities/guarantee.entity';
 import { CreateGuaranteeDto } from './dto/create-guarantee.dto';
 import { UpdateGuaranteeAiDto } from './dto/update-guarantee-ai.dto';
@@ -13,12 +13,36 @@ export class GuaranteesService {
   ) {}
 
   findAll(userId: string): Promise<Guarantee[]> {
-    return this.repo.find({ where: { user_id: userId }, order: { created_at: 'DESC' } });
+    // DRAFT guarantees are invisible to the user until explicitly confirmed
+    return this.repo.find({
+      where: { user_id: userId, status: Not(GuaranteeStatus.DRAFT) },
+      order: { created_at: 'DESC' },
+    });
   }
 
   async create(userId: string, dto: CreateGuaranteeDto): Promise<Guarantee> {
     const guarantee = this.repo.create({ ...dto, estimated_value: dto.estimated_value ?? 0, user_id: userId });
     return this.repo.save(guarantee);
+  }
+
+  /** Creates a DRAFT guarantee — invisible in the dashboard.
+   *  The auditor tool uses its ID to post the hardware report.
+   *  Call confirmGuarantee() after the audit passes to make it visible. */
+  async createDraft(userId: string, dto: CreateGuaranteeDto): Promise<Guarantee> {
+    const guarantee = this.repo.create({
+      ...dto,
+      estimated_value: dto.estimated_value ?? 0,
+      user_id: userId,
+      status: GuaranteeStatus.DRAFT,
+    });
+    return this.repo.save(guarantee);
+  }
+
+  /** Promotes a DRAFT guarantee to ACTIVE so it appears in the user's dashboard. */
+  async confirmGuarantee(id: string, userId: string): Promise<Guarantee> {
+    const g = await this.findOne(id, userId);
+    g.status = GuaranteeStatus.ACTIVE;
+    return this.repo.save(g);
   }
 
   async findOne(id: string, userId: string): Promise<Guarantee> {
