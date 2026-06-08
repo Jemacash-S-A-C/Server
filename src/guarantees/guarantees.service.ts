@@ -6,6 +6,23 @@ import { CreateGuaranteeDto } from './dto/create-guarantee.dto';
 import { UpdateGuaranteeAiDto } from './dto/update-guarantee-ai.dto';
 import { ReportAuditDto } from './dto/report-audit.dto';
 
+/**
+ * Parsea un valor de RAM o almacenamiento a GB numérico.
+ * Ejemplos: "1TB" → 1000, "2 TB" → 2000, "512GB" → 512, "16GB" → 16, "931" → 931
+ * Se usa 1 TB = 1000 GB (decimal, como lo reportan fabricantes y el SO en Windows/macOS)
+ */
+function parseSpecGb(value: string): number {
+  if (!value) return 0;
+  const v = value.trim().toUpperCase();
+  const num = parseFloat(v.replace(/[^0-9.]/g, '') || '0');
+  if (!num) return 0;
+  if (v.includes('TB') || v.endsWith('T')) return Math.round(num * 1000);
+  if (v.includes('GB') || v.endsWith('G')) return Math.round(num);
+  if (v.includes('MB') || v.endsWith('M')) return Math.round(num / 1024);
+  // Sin unidad — asume GB
+  return Math.round(num);
+}
+
 @Injectable()
 export class GuaranteesService {
   constructor(
@@ -117,20 +134,21 @@ export class GuaranteesService {
       }
     }
 
-    // RAM check (allow 25% tolerance for OS overhead)
-    const declaredRam = parseInt((g.specs?.ram ?? '').replace(/[^0-9]/g, '') || '0', 10);
-    const auditRam    = parseInt(dto.specs?.total_ram_gb ?? dto.specs?.ram ?? '0', 10);
+    // RAM check — tolerancia 30%: el SO reporta menos que el físico instalado
+    const declaredRam = parseSpecGb(g.specs?.ram ?? '');
+    const auditRam    = parseSpecGb(dto.specs?.total_ram_gb ?? dto.specs?.ram ?? '');
     if (declaredRam > 0 && auditRam > 0) {
-      if (Math.abs(declaredRam - auditRam) / declaredRam > 0.25) {
+      if (Math.abs(declaredRam - auditRam) / declaredRam > 0.30) {
         issues.push(`RAM declarada: ${g.specs?.ram} vs auditada: ${auditRam} GB`);
       }
     }
 
-    // Storage check (allow 20% tolerance for drive capacity reporting differences)
-    const declaredStorage = parseInt((g.specs?.storage ?? '').replace(/[^0-9]/g, '') || '0', 10);
-    const auditStorage    = parseInt(dto.specs?.primary_disk_size_gb ?? dto.specs?.storage ?? '0', 10);
+    // Storage check — tolerancia 15%: 1 TB de fábrica ≈ 910–950 GB en el SO
+    // (diferencia binaria/decimal + partición de recuperación + overhead del SO)
+    const declaredStorage = parseSpecGb(g.specs?.storage ?? '');
+    const auditStorage    = parseSpecGb(dto.specs?.primary_disk_size_gb ?? dto.specs?.storage ?? '');
     if (declaredStorage > 0 && auditStorage > 0) {
-      if (Math.abs(declaredStorage - auditStorage) / declaredStorage > 0.20) {
+      if (Math.abs(declaredStorage - auditStorage) / declaredStorage > 0.15) {
         issues.push(`Almacenamiento declarado: ${g.specs?.storage} vs auditado: ${auditStorage} GB`);
       }
     }
