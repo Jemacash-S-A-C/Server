@@ -43,6 +43,8 @@ export class PaymentsService {
       }
     }
 
+    // MP rejects transaction_amount with more than 2 decimal places
+    const transactionAmount = parseFloat(Number(dto.amount).toFixed(2));
     let mpPaymentId: string | null = null;
 
     if (!isMpMockMode()) {
@@ -54,7 +56,7 @@ export class PaymentsService {
       const result = await paymentApi.create({
         body: {
           token: dto.token,
-          transaction_amount: dto.amount,
+          transaction_amount: transactionAmount,
           installments: dto.installments,
           payment_method_id: dto.payment_method_id,
           issuer_id: dto.issuer_id ? parseInt(dto.issuer_id, 10) : undefined,
@@ -78,7 +80,7 @@ export class PaymentsService {
     const payment = this.repo.create({
       application_id: dto.application_id,
       user_id: userId,
-      amount: dto.amount,
+      amount: transactionAmount,
       payment_method: PaymentMethod.MERCADOPAGO,
       status: PaymentStatus.COMPLETED,
       cuota_number: dto.cuota_number,
