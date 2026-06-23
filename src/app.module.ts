@@ -25,6 +25,7 @@ import { Signature } from './signature/entities/signature.entity';
 import { Payment } from './payments/entities/payment.entity';
 import { MpPendingPayment } from './payments/entities/mp-pending-payment.entity';
 import { PasswordResetToken } from './auth/entities/password-reset-token.entity';
+import { DevicePrice } from './ai-evaluation/entities/device-price.entity';
 
 @Module({
   imports: [
@@ -36,7 +37,7 @@ import { PasswordResetToken } from './auth/entities/password-reset-token.entity'
       username: process.env.DB_USER ?? 'postgres',
       password: process.env.DB_PASSWORD ?? 'postgres',
       database: process.env.DB_NAME ?? 'jemacash',
-      entities: [User, Session, Guarantee, LoanApplication, Evaluation, Signature, Payment, MpPendingPayment, Document, PasswordResetToken],
+      entities: [User, Session, Guarantee, LoanApplication, Evaluation, Signature, Payment, MpPendingPayment, Document, PasswordResetToken, DevicePrice],
       migrations: [__dirname + '/migrations/*{.ts,.js}'],
       migrationsTableName: 'typeorm_migrations',
       synchronize: process.env.NODE_ENV !== 'production',

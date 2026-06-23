@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { ValuateDeviceDto } from './dto/valuate-device.dto';
+import { DevicePrice } from './entities/device-price.entity';
 
 export interface AiValuationResult {
   condition_score: number;
@@ -19,17 +22,31 @@ export class AiEvaluationService {
   private readonly logger = new Logger(AiEvaluationService.name);
   private readonly groqKey: string;
   private readonly isMock: boolean;
+  private readonly meliClientId: string;
+  private readonly meliClientSecret: string;
+  /** Cached app token (client_credentials) + its expiry as epoch ms. */
+  private meliAccessToken: string | null = null;
+  private meliTokenExpiresAt = 0;
 
-  constructor() {
+  constructor(
+    @InjectRepository(DevicePrice) private readonly priceRepo: Repository<DevicePrice>,
+  ) {
     this.groqKey = process.env.GROQ_API_KEY ?? '';
     this.isMock = !this.groqKey || this.groqKey.includes('REEMPLAZAR') || this.groqKey.trim() === '';
+    this.meliClientId = process.env.MELI_CLIENT_ID ?? '';
+    this.meliClientSecret = process.env.MELI_CLIENT_SECRET ?? '';
     if (this.isMock) {
-      this.logger.warn('GROQ_API_KEY no configurada — usando modo simulación. Obtén una key gratis en console.groq.com');
+      this.logger.warn('GROQ_API_KEY no configurada — la valuación con IA NO funcionará. Obtén una key gratis en console.groq.com');
+    }
+    if (!this.meliClientId || !this.meliClientSecret) {
+      this.logger.warn('MELI_CLIENT_ID/SECRET no configurados — precios desde estimación LLM en vez de listings reales de MercadoLibre Perú');
     }
   }
 
   async valuateDevice(dto: ValuateDeviceDto): Promise<AiValuationResult> {
-    if (this.isMock) return this.mockValuation(dto);
+    if (this.isMock) {
+      throw new Error('GROQ_API_KEY no configurada — la valuación con IA no está disponible.');
+    }
 
     const webPrices = await this.fetchPricesViaWebSearch(dto);
     const photoKBs = dto.photos.map((p) => Math.round(p.length / 1024));
@@ -49,10 +66,11 @@ export class AiEvaluationService {
     try {
       return await this.callGroq(dto, webPrices, [], true);
     } catch (err: unknown) {
-      const status = (err as { status?: number }).status;
-      if (status !== 429 && status !== 413) throw err;
-      this.logger.warn(`Groq ${status} texto — cayendo a mock`);
-      return this.mockValuation(dto);
+      // No mock fallback on purpose: an invented price could massively over-value the
+      // device (e.g. a S/600 item priced at S/3500) and cause real loss. If the AI
+      // can't value it, the valuation fails — that's safer than a fabricated number.
+      this.logger.warn('Groq valuation failed (no mock fallback) — surfacing the error');
+      throw err;
     }
   }
 
@@ -102,23 +120,42 @@ export class AiEvaluationService {
     let resale  = Math.max(0, Number(json.resale_value_pen)  || 0);
     let market  = Math.max(0, Number(json.market_value_pen)  || 0);
 
-    // Hard price cap: if we have a web reference, cap based on declared condition so
-    // different conditions always produce meaningfully different prices.
-    // excelente → up to 100% of web min; bueno → up to 75%; regular → up to 55%
+    // Market = the representative real price (the median on MercadoLibre). The
+    // absolute-cheapest listing is often bait or a typo, so the median is more honest
+    // than the floor. Resale is ALWAYS a fraction of market by condition (a quick-sale
+    // recovery value), so even "excelente" stays below market. The resale share uses
+    // the WORSE of the user-declared condition and the one the AI sees — anti-overvaluation.
+    // Shares: excelente 70% / bueno 55% / regular 40% / malo 30%.
     if (ml.min > 0) {
-      const condCap = dto.condition === 'excelente' ? 1.0
-        : dto.condition === 'bueno'     ? 0.75
-        : 0.55;
-      resale  = Math.min(resale,  Math.round(ml.min * condCap));
-      market  = Math.min(market,  Math.round(ml.min * (condCap + 0.20)));
-      this.logger.log(`Price cap applied — web min: S/${Math.round(ml.min)}, condition: ${dto.condition}, cap: ${condCap}, capped resale: S/${resale}, market: S/${market}`);
+      const rank = (c: string): number =>
+        ({ excelente: 4, bueno: 3, regular: 2, malo: 1 } as Record<string, number>)[c] ?? 0;
+      const detected = String(json.visual_condition || '').toLowerCase();
+      // Use the AI-detected condition only when it's valid AND worse than declared.
+      const effectiveCondition =
+        rank(detected) > 0 && rank(detected) < rank(dto.condition) ? detected : dto.condition;
+      const condFactor = effectiveCondition === 'excelente' ? 0.70
+        : effectiveCondition === 'bueno'    ? 0.55
+        : effectiveCondition === 'regular'  ? 0.40
+        : 0.30; // malo
+      // C — low AI confidence → extra conservative discount (we trust the photos less).
+      const confidence = Math.min(1, Math.max(0, Number(json.confidence) || 0.7));
+      const confidenceFactor = confidence < 0.6 ? 0.90 : 1.0;
+      // D — each detected depreciation factor shaves a bit off the resale, capped at -10%.
+      const depCount = Array.isArray(json.depreciation_factors) ? json.depreciation_factors.length : 0;
+      const depFactor = Math.max(0.90, 1 - depCount * 0.02);
+
+      market = Math.round(ml.avg > 0 ? ml.avg : ml.min); // representative price (median on MercadoLibre)
+      resale = Math.round(market * condFactor * confidenceFactor * depFactor); // quick-sale recovery value
+      this.logger.log(`Price cap — market S/${market} (avg of S/${Math.round(ml.min)}–${Math.round(ml.max)}), cond ${effectiveCondition} ${Math.round(condFactor * 100)}%, conf ${confidence.toFixed(2)}→×${confidenceFactor}, dep ${depCount}→×${depFactor.toFixed(2)} → resale S/${resale}`);
     }
 
     return {
       condition_score:      Math.min(10, Math.max(0, Number(json.condition_score) || 7)),
       market_value_pen:     market,
       resale_value_pen:     resale,
-      max_loan_pen:         Math.round(resale * 0.8),
+      // Max loan = full resale value: that's what we could recover by reselling
+      // the device, so it's the most attractive offer we can responsibly make.
+      max_loan_pen:         Math.round(resale),
       depreciation_factors: Array.isArray(json.depreciation_factors)
         ? (json.depreciation_factors as string[]).slice(0, 5)
         : [],
@@ -166,7 +203,7 @@ export class AiEvaluationService {
     return data.choices[0]?.message?.content ?? '{}';
   }
 
-  // Plain chat (no json_object format — used for compound-beta web search)
+  // Plain chat (no json_object format — used for the knowledge price estimate)
   private async groqChatRaw(
     model: string,
     messages: { role: string; content: unknown }[],
@@ -177,7 +214,7 @@ export class AiEvaluationService {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.groqKey}`,
       },
-      body: JSON.stringify({ model, messages, max_tokens: 256, temperature: 0.1 }),
+      body: JSON.stringify({ model, messages, max_tokens: 256, temperature: 0 }),
     });
     if (!res.ok) {
       const body = await res.text();
@@ -187,43 +224,146 @@ export class AiEvaluationService {
     return data.choices[0]?.message?.content ?? '';
   }
 
-  // ── Web price search (Groq compound-beta) ────────────────────────────────────
+  // ── Market price (MercadoLibre + LLM knowledge fallback) + per-model cache ───
 
+  /** Normalized cache key for a device's market price. */
+  private priceCacheKey(dto: ValuateDeviceDto): string {
+    return [dto.brand, dto.model, dto.manufacture_year, dto.ram, dto.storage]
+      .map((s) => String(s ?? '').trim().toLowerCase())
+      .join('|');
+  }
+
+  /** Lazy per-model price cache: reuse a stored market price (within TTL) before
+   *  hitting Groq, so the same device always values consistently and we save calls.
+   *  Only the market reference is cached — photo/condition analysis runs per device. */
   private async fetchPricesViaWebSearch(
     dto: ValuateDeviceDto,
   ): Promise<{ min: number; max: number; avg: number }> {
-    // Step 1: live web search via compound-beta
-    const webResult = await this.searchWebCheapestPrice(dto);
-    if (webResult.min > 0) return webResult;
+    const PRICE_TTL_MS = 60 * 24 * 60 * 60 * 1000; // 60 days
+    const key = this.priceCacheKey(dto);
 
-    // Step 2: fallback — ask llama-3.3-70b for its training-data knowledge of typical Peruvian prices
-    return this.estimatePriceFromKnowledge(dto);
+    let existing: DevicePrice | null = null;
+    try {
+      existing = await this.priceRepo.findOne({ where: { cache_key: key } });
+      if (existing) {
+        const age = Date.now() - new Date(existing.updated_at).getTime();
+        if (age < PRICE_TTL_MS) {
+          const cached = { min: Number(existing.min_pen), max: Number(existing.max_pen), avg: Number(existing.avg_pen) };
+          this.logger.log(`price cache HIT — ${key} → S/${cached.min}–${cached.max} avg ${cached.avg}`);
+          return cached;
+        }
+      }
+    } catch {
+      // Cache read failed (e.g. table not ready) — fall through to a live fetch.
+    }
+
+    const live = await this.computeLivePrices(dto);
+
+    if (live.min > 0) {
+      try {
+        await this.priceRepo.save({
+          ...(existing ? { id: existing.id } : {}),
+          cache_key: key,
+          min_pen: live.min,
+          max_pen: live.max,
+          avg_pen: live.avg,
+        });
+        this.logger.log(`price cache STORE — ${key} → S/${live.min}–${live.max} avg ${live.avg}`);
+      } catch {
+        // Cache write failed — non-fatal, the valuation still proceeds.
+      }
+    }
+    return live;
   }
 
-  private async searchWebCheapestPrice(
+  /** Real Peruvian market price. Prefers actual MercadoLibre listings; falls back to
+   *  the LLM's knowledge estimate (biased conservative) when MELI isn't available. */
+  private async computeLivePrices(
     dto: ValuateDeviceDto,
   ): Promise<{ min: number; max: number; avg: number }> {
+    // 1. Real listings from MercadoLibre Perú — the source of truth when available.
+    const meli = await this.searchMercadoLibrePrice(dto);
+    if (meli.min > 0) return meli;
+
+    // 2. Fallback — the LLM's training-data estimate. (The agentic web search was
+    // removed: it was inconsistent and routinely 413'd, adding latency for nothing.)
+    const knowledge = await this.estimatePriceFromKnowledge(dto);
+    if (knowledge.min <= 0 && knowledge.avg <= 0) return knowledge; // nothing usable
+
+    const min = knowledge.min > 0 ? knowledge.min : knowledge.avg;
+    const max = knowledge.max > 0 ? knowledge.max : Math.max(min, knowledge.avg);
+    const baseAvg = knowledge.avg > 0 ? knowledge.avg : (min + max) / 2;
+    // The LLM tends to overestimate, so the headline market value = midpoint between
+    // the low end and the average (conservative). MELI, when available, uses its real median.
+    const avg = Math.round((min + baseAvg) / 2);
+
+    this.logger.log(`price (LLM) — knowledge S/${Math.round(min)}–${Math.round(max)} avg S/${Math.round(baseAvg)} → market S/${avg}`);
+    return { min: Math.round(min), max: Math.round(max), avg };
+  }
+
+  /** Returns a valid MercadoLibre app token via client_credentials, cached in memory
+   *  until it nears expiry. Renewed automatically — no refresh token needed.
+   *  Returns null if credentials aren't configured. */
+  private async getMeliAccessToken(): Promise<string | null> {
+    if (!this.meliClientId || !this.meliClientSecret) return null;
+    const now = Date.now();
+    if (this.meliAccessToken && this.meliTokenExpiresAt > now + 60_000) return this.meliAccessToken;
     try {
-      const specs = `${dto.brand} ${dto.model} ${dto.manufacture_year} ${dto.storage}`;
-      const raw = await this.groqChatRaw('compound-beta', [
-        {
-          role: 'user',
-          content:
-            `Precio mínimo de "${specs}" usado en Perú (OLX, ML, Facebook). ` +
-            `JSON sin markdown: {"min_price_pen":N,"max_price_pen":N,"avg_price_pen":N} en soles.`,
-        },
-      ]);
-      const match = raw.match(/\{[^{}]+\}/);
-      if (!match) return { min: 0, max: 0, avg: 0 };
-      const json = JSON.parse(match[0]) as { min_price_pen?: unknown; max_price_pen?: unknown; avg_price_pen?: unknown };
-      const min = Math.max(0, Number(json.min_price_pen) || 0);
-      const max = Math.max(0, Number(json.max_price_pen) || 0);
-      const avg = Math.max(0, Number(json.avg_price_pen) || 0);
-      if (min === 0 && max === 0 && avg === 0) return { min: 0, max: 0, avg: 0 };
-      this.logger.log(`compound-beta web price — S/ ${min}–${max} avg ${avg}`);
+      const res = await fetch('https://api.mercadolibre.com/oauth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: this.meliClientId,
+          client_secret: this.meliClientSecret,
+        }),
+      });
+      if (!res.ok) {
+        this.logger.warn(`MELI token ${res.status} — revisa MELI_CLIENT_ID/SECRET`);
+        return null;
+      }
+      const data = (await res.json()) as { access_token: string; expires_in?: number };
+      this.meliAccessToken = data.access_token;
+      this.meliTokenExpiresAt = now + (data.expires_in ?? 21600) * 1000;
+      this.logger.log('MELI access token obtained (client_credentials)');
+      return this.meliAccessToken;
+    } catch (err) {
+      this.logger.warn(`MELI token request failed: ${String(err).slice(0, 100)}`);
+      return null;
+    }
+  }
+
+  /** Real Peruvian prices from MercadoLibre (site MPE). Returns {0,0,0} if unavailable,
+   *  so the caller falls back to the LLM estimate. Uses the MEDIAN of real used-item
+   *  listings as the representative price. */
+  private async searchMercadoLibrePrice(
+    dto: ValuateDeviceDto,
+  ): Promise<{ min: number; max: number; avg: number }> {
+    const token = await this.getMeliAccessToken();
+    if (!token) return { min: 0, max: 0, avg: 0 };
+    try {
+      const q = encodeURIComponent(`${dto.brand} ${dto.model} ${dto.ram} ${dto.storage}`.replace(/\s+/g, ' ').trim());
+      const url = `https://api.mercadolibre.com/sites/MPE/search?q=${q}&condition=used&limit=50`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) {
+        this.logger.debug(`MercadoLibre ${res.status} — falling back to LLM pricing`);
+        return { min: 0, max: 0, avg: 0 };
+      }
+      const data = (await res.json()) as { results?: { price?: number; currency_id?: string }[] };
+      const prices = (data.results ?? [])
+        .filter((r) => (r.currency_id ?? 'PEN') === 'PEN')
+        .map((r) => Number(r.price))
+        .filter((p) => p > 0)
+        .sort((a, b) => a - b);
+      if (prices.length < 3) return { min: 0, max: 0, avg: 0 }; // too few listings to trust
+      const at = (qt: number) => prices[Math.min(prices.length - 1, Math.floor(prices.length * qt))];
+      const min = Math.round(at(0.10)); // low but realistic (skip absolute-bottom outliers)
+      const avg = Math.round(at(0.50)); // median
+      const max = Math.round(at(0.90));
+      this.logger.log(`MercadoLibre MPE (${prices.length} listings) — S/${min}–${max} avg ${avg}`);
       return { min, max, avg };
     } catch (err) {
-      this.logger.warn(`compound-beta search failed: ${String(err).slice(0, 100)}`);
+      this.logger.debug(`MercadoLibre fetch failed: ${String(err).slice(0, 100)}`);
       return { min: 0, max: 0, avg: 0 };
     }
   }
@@ -237,8 +377,9 @@ export class AiEvaluationService {
         {
           role: 'user',
           content:
-            `¿Cuál es el precio más barato y el precio promedio de un "${specs}" usado en Perú (segunda mano)? ` +
-            `Sé conservador y usa el precio más bajo posible del mercado peruano informal (OLX, Facebook, ML). ` +
+            `Estima el precio de un "${specs}" USADO y funcional, en buen estado, en el mercado de segunda mano de Perú. ` +
+            `Es exactamente esta configuración (${dto.ram} de RAM, ${dto.storage}): no asumas variantes con más RAM o almacenamiento, que son más caras. ` +
+            `Considera una unidad COMPLETA (no repuestos, no dañados, no nueva sellada). El precio usado en Perú es MUCHO menor al precio nuevo o internacional: aplica una depreciación fuerte y, ante la duda, SUBESTIMA antes que sobreestimar. ` +
             `Responde SOLO con este JSON sin markdown:\n` +
             `{"min_price_pen":número_entero,"max_price_pen":número_entero,"avg_price_pen":número_entero}`,
         },
@@ -316,7 +457,7 @@ ESPECIFICACIONES:
 - Año: ${dto.manufacture_year}
 - Procesador: ${dto.processor}
 - RAM: ${dto.ram}
-- Almacenamiento: ${dto.storage}${dto.battery_health ? `\n- Salud batería: ${dto.battery_health}%` : ''}${dto.screen_size ? `\n- Pantalla: ${dto.screen_size}` : ''}
+- Almacenamiento: ${dto.storage}${dto.battery_health ? `\n- Salud batería: ${dto.battery_health}%` : ''}
 - Condición declarada: ${dto.condition}
 - Reacondicionado: ${dto.is_reconditioned ? 'Sí' : 'No'}
 
@@ -328,59 +469,4 @@ ${photoCount > 0
   : 'Sin fotos — valúa basándote en especificaciones y referencia web de precio. device_match_valid debe ser false porque no se puede verificar visualmente el dispositivo.'}`;
   }
 
-  // ── Mock ─────────────────────────────────────────────────────────────────────
-
-  private mockValuation(dto: ValuateDeviceDto): AiValuationResult {
-    const basePrices: Record<string, number> = {
-      laptop: 2800, smartphone: 950, tablet: 750,
-      desktop: 1600, consola: 700, smartwatch: 320,
-    };
-    const baseVal = basePrices[dto.device_category] ?? 1200;
-
-    // Condition — meaningful spread so prices look different per condition
-    const condMult = dto.condition === 'excelente' ? 1.0
-      : dto.condition === 'bueno'     ? 0.72
-      : 0.50;
-
-    // Year depreciation: ~10% per year, floor 35%
-    const currentYear = new Date().getFullYear();
-    const devYear = parseInt(dto.manufacture_year ?? String(currentYear - 3), 10);
-    const age = Math.max(0, currentYear - devYear);
-    const yearMult = Math.max(0.35, 1 - age * 0.10);
-
-    // Brand premium
-    const brand = (dto.brand ?? '').toLowerCase();
-    const brandMult =
-      brand.includes('apple')   ? 1.60 :
-      brand.includes('sony')    ? 1.20 :
-      brand.includes('samsung') ? 1.15 :
-      brand.includes('dell')    ? 1.05 :
-      brand.includes('lenovo') || brand.includes('hp') ? 1.00 :
-      brand.includes('huawei')  ? 0.90 :
-      0.82;
-
-    // RAM / storage bonus (laptops & desktops)
-    let specMult = 1.0;
-    if (['laptop', 'desktop'].includes(dto.device_category)) {
-      const ramGb = parseInt((dto.ram ?? '').replace(/[^0-9]/g, '') || '8', 10);
-      specMult = ramGb >= 32 ? 1.30 : ramGb >= 16 ? 1.15 : ramGb >= 8 ? 1.00 : 0.85;
-    }
-
-    const reconMult = dto.is_reconditioned ? 0.82 : 1.0;
-    const market = Math.round(baseVal * condMult * yearMult * brandMult * specMult * reconMult);
-    const resale = Math.round(market * 0.88);
-
-    return {
-      condition_score: condMult === 1.0 ? 8.5 : condMult > 0.6 ? 6.0 : 4.0,
-      market_value_pen: market,
-      resale_value_pen: resale,
-      max_loan_pen: Math.round(resale * 0.8),
-      depreciation_factors: ['Modo simulación — configure GROQ_API_KEY para valuación real con IA'],
-      confidence: 0.45,
-      reasoning: 'Valuación estimada sin IA activa. Configura GROQ_API_KEY en server/.env para activar la valuación real (gratis en console.groq.com).',
-      visual_condition: dto.condition,
-      device_match_valid: true,
-      match_rejection_reason: undefined,
-    };
-  }
 }

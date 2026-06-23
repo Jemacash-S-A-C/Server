@@ -37,11 +37,6 @@ export class ValuateDeviceDto {
   battery_health?: string;
 
   @IsString()
-  @IsOptional()
-  @MaxLength(20)
-  screen_size?: string;
-
-  @IsString()
   @MaxLength(20)
   condition: string;
 
