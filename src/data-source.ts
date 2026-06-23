@@ -7,8 +7,10 @@ import { LoanApplication } from './applications/entities/loan-application.entity
 import { Evaluation } from './evaluation/entities/evaluation.entity'
 import { Signature } from './signature/entities/signature.entity'
 import { Payment } from './payments/entities/payment.entity'
+import { MpPendingPayment } from './payments/entities/mp-pending-payment.entity'
 import { Document } from './documents/entities/document.entity'
 import { PasswordResetToken } from './auth/entities/password-reset-token.entity'
+import { DevicePrice } from './ai-evaluation/entities/device-price.entity'
 
 /**
  * Standalone DataSource used by the TypeORM CLI (migration:generate, migration:run, etc.)
@@ -36,8 +38,10 @@ export const AppDataSource = new DataSource({
     Evaluation,
     Signature,
     Payment,
+    MpPendingPayment,
     Document,
     PasswordResetToken,
+    DevicePrice,
   ],
 
   migrations: ['src/migrations/*.ts'],
