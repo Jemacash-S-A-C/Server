@@ -50,7 +50,7 @@ export class AiEvaluationService {
 
     const webPrices = await this.fetchPricesViaWebSearch(dto);
     const photoKBs = dto.photos.map((p) => Math.round(p.length / 1024));
-    this.logger.log(`AI valuate — ${dto.photos.length} fotos [${photoKBs.join(', ')} KB], web price ref: S/${Math.round(webPrices.min)}–${Math.round(webPrices.max)}, modelo: llama-4-scout (vision) / llama-3.3-70b (texto)`);
+    this.logger.log(`AI valuate — ${dto.photos.length} fotos [${photoKBs.join(', ')} KB], web price ref: S/${Math.round(webPrices.min)}–${Math.round(webPrices.max)}, modelo: qwen3.8-27b (vision) / llama-3.3-70b (texto)`);
 
     // Attempt 1: with photos (vision)
     try {
@@ -109,7 +109,7 @@ export class AiEvaluationService {
       content.push({ type: 'image_url', image_url: { url: photos[i] } });
     }
 
-    const model = photos.length > 0 ? 'meta-llama/llama-4-scout-17b-16e-instruct' : 'llama-3.3-70b-versatile';
+    const model = photos.length > 0 ? 'qwen/qwen3.8-27b' : 'llama-3.3-70b-versatile';
     const raw = await this.groqChat(model, [
       { role: 'system', content: this.systemPrompt() },
       { role: 'user', content },
@@ -117,8 +117,19 @@ export class AiEvaluationService {
 
     const json = JSON.parse(raw) as Partial<AiValuationResult>;
 
-    let resale  = Math.max(0, Number(json.resale_value_pen)  || 0);
-    let market  = Math.max(0, Number(json.market_value_pen)  || 0);
+    let market = Math.max(0, Number(json.market_value_pen) || 0);
+    let resale = Math.max(0, Number(json.resale_value_pen) || 0);
+
+    // Models can omit resale_value_pen even when they return a valid market value.
+    // Derive a conservative resale estimate instead of silently turning it into S/ 0.
+    if (resale === 0 && market > 0) {
+      const resaleFactor = dto.condition === 'excelente' ? 0.90
+        : dto.condition === 'bueno' ? 0.70
+        : dto.condition === 'regular' ? 0.50
+        : 0.35;
+      resale = Math.round(market * resaleFactor);
+      this.logger.warn(`Groq omitted resale_value_pen; derived S/${resale} from market value S/${market} (${dto.condition})`);
+    }
 
     // Market = the representative real price (the median on MercadoLibre). The
     // absolute-cheapest listing is often bait or a typo, so the median is more honest
